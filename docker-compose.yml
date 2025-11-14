@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  trmd:
+    build: .
+    image: trmd:latest
+    container_name: trmd
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+    # Enable interactive TTY for first-time config prompts
+    stdin_open: true
+    tty: true
+    working_dir: /opt/trmd
+    volumes:
+      # Config file (created on first run if missing). You can precreate and edit it to skip prompts.
+      - /mnt/cache/appdata/trmd/config/config.yaml:/opt/trmd/config.yaml
+      # Persist Telegram sessions and temp files
+      - /mnt/cache/appdata/trmd/sessions:/opt/trmd/sessions
+      - /mnt/cache/appdata/trmd/temp:/opt/trmd/temp
+      # Global config (~/.config/TRMD)
+      - /mnt/cache/appdata/trmd/global_config:/root/.config/TRMD
+      # Downloads output directory inside container is /data
+      - /mnt/user/Sage-NAS/Downloads/Telegram:/data
+      # Links file directory (e.g., ./links/links.txt)
+      - /mnt/cache/appdata/trmd/links:/links
+    command: ["python", "main.py"]
+

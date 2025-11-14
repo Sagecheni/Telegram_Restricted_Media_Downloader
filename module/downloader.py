@@ -100,6 +100,10 @@ class TelegramRestrictedMediaDownloader(Bot):
         self.pb = ProgressBar()
         self.uploader: Union[TelegramUploader, None] = None
         self.cd: Union[CallbackData, None] = None
+        # 标签映射: 链接->标签、(chat_id,message_id)->标签、监听(chat_id)->标签
+        self.link_tag_map: Dict[str, str] = {}
+        self.message_tag_map: Dict[tuple, str] = {}
+        self.listen_download_tag_by_chatid: Dict[Union[int, str], str] = {}
 
     def env_save_directory(
             self,
@@ -120,6 +124,20 @@ class TelegramRestrictedMediaDownloader(Bot):
                                 placeholder,
                                 dtype
                             )
+        # 附加标签子目录(优先级: 单条消息标签 > 监听频道标签)
+        try:
+            chat_id = getattr(getattr(message, 'chat', None), 'id', None)
+            mid = getattr(message, 'id', None)
+            tag = None
+            if chat_id is not None and mid is not None:
+                tag = self.message_tag_map.get((chat_id, mid))
+            if tag is None and chat_id is not None:
+                tag = self.listen_download_tag_by_chatid.get(chat_id)
+            if isinstance(tag, str) and tag.strip():
+                from module.path_tool import validate_title
+                save_directory = os.path.join(save_directory, validate_title(tag.strip()))
+        except Exception:
+            pass
         return save_directory
 
     async def get_download_link_from_bot(
@@ -134,6 +152,14 @@ class TelegramRestrictedMediaDownloader(Bot):
         right_link: set = link_meta.get('right_link')
         invalid_link: set = link_meta.get('invalid_link')
         last_bot_message: Union[pyrogram.types.Message, None] = link_meta.get('last_bot_message')
+        tag: Union[str, None] = link_meta.get('tag')
+        # 记录链接级别的标签, 在后续创建任务时映射到具体消息
+        if tag:
+            for rl in list(right_link or []):
+                try:
+                    self.link_tag_map[rl] = tag
+                except Exception:
+                    pass
         exist_link: set = set([_ for _ in right_link if _ in self.bot_task_link])
         exist_link.update(right_link & DownloadTask.COMPLETE_LINK)
         right_link -= exist_link
@@ -1064,6 +1090,8 @@ class TelegramRestrictedMediaDownloader(Bot):
         if meta is None:
             return None
 
+        tag: Union[str, None] = meta.get('tag')
+
         async def add_listen_chat(_link: str, _listen_chat: dict, _callback: callable) -> bool:
             if _link not in _listen_chat:
                 try:
@@ -1073,6 +1101,12 @@ class TelegramRestrictedMediaDownloader(Bot):
                     handler = MessageHandler(_callback, filters=pyrogram.filters.chat(chat.id))
                     _listen_chat[_link] = handler
                     self.user.add_handler(handler)
+                    # 记录监听频道的标签
+                    try:
+                        if tag:
+                            self.listen_download_tag_by_chatid[chat.id] = tag
+                    except Exception:
+                        pass
                     return True
                 except PeerIdInvalid:
                     try:
@@ -1096,6 +1130,12 @@ class TelegramRestrictedMediaDownloader(Bot):
                         )
                         _listen_chat[_link] = handler
                         self.user.add_handler(handler)
+                        # 记录监听频道的标签
+                        try:
+                            if tag and chat_id is not None:
+                                self.listen_download_tag_by_chatid[chat_id] = tag
+                        except Exception:
+                            pass
                         return True
                     except ValueError as e:
                         await client.send_message(
@@ -1175,6 +1215,14 @@ class TelegramRestrictedMediaDownloader(Bot):
             message: pyrogram.types.Message
     ):
         try:
+            # 若该监听频道设置了标签, 为当前消息链接记录标签
+            try:
+                _chat_id = getattr(getattr(message, 'chat', None), 'id', None)
+                _tag = self.listen_download_tag_by_chatid.get(_chat_id)
+                if _tag and getattr(message, 'link', None):
+                    self.link_tag_map[message.link] = _tag
+            except Exception:
+                pass
             await self.create_download_task(message_ids=message.link, single_link=True)
         except Exception as e:
             log.exception(f'监听下载出现错误,{_t(KeyWord.REASON)}:{e}')
@@ -1391,6 +1439,17 @@ class TelegramRestrictedMediaDownloader(Bot):
                 while self.app.current_task_num >= self.app.max_download_task:  # v1.0.7 增加下载任务数限制。
                     await self.event.wait()
                     self.event.clear()
+                # 在获取元数据前建立消息与标签的映射
+                try:
+                    _chat_id = getattr(getattr(message, 'chat', None), 'id', None)
+                    _mid = getattr(message, 'id', None)
+                    _tag = self.link_tag_map.get(link)
+                    if not _tag and _chat_id is not None:
+                        _tag = self.listen_download_tag_by_chatid.get(_chat_id)
+                    if _tag and _chat_id is not None and _mid is not None:
+                        self.message_tag_map[(_chat_id, _mid)] = _tag
+                except Exception:
+                    pass
                 file_id, temp_file_path, sever_file_size, file_name, save_directory, format_file_size = \
                     self.get_media_meta(
                         message=message,

@@ -1032,12 +1032,12 @@ class GetStdioParams:
 class BotCommandText:
     HELP: tuple = ('help', '展示可用命令。')
     DOWNLOAD: tuple = (
-        'download', '分配新的下载任务(多种使用方式见使用说明)。\n`/download https://t.me/x/x 起始ID 结束ID`')
+        'download', '分配新的下载任务(多种使用方式见使用说明)。\n`/download https://t.me/x/x 起始ID 结束ID [标签]` 或 `/download 链接1 链接2 [标签]`')
     TABLE: tuple = ('table', '在终端输出当前下载情况的统计信息。')
     FORWARD: tuple = ('forward', '从频道A转发至频道B 起始ID 结束ID。\n`/forward https://t.me/A https://t.me/B 1 100`')
     EXIT: tuple = ('exit', '退出软件。')
     LISTEN_DOWNLOAD: tuple = ('listen_download',
-                              '实时监听该链接的最新消息(视频和图片)进行下载。\n`/listen_download https://t.me/A https://t.me/B https://t.me/n`')
+                              '实时监听该链接的最新消息(视频和图片)进行下载。\n`/listen_download 链接1 链接2 [标签]`')
     LISTEN_FORWARD: tuple = (
         'listen_forward', '实时监听该链接的最新消息(任意消息)进行转发。\n`/listen_forward 监听频道 转发频道`')
     LISTEN_INFO: tuple = ('listen_info', '查看当前已经创建的监听信息。')

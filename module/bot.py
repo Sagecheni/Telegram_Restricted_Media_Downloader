@@ -127,7 +127,7 @@ class Bot:
             client: pyrogram.Client,
             message: pyrogram.types.Message,
             with_upload: Union[dict, None] = None
-    ) -> Union[Dict[str, Union[set, pyrogram.types.Message]], None]:
+    ) -> Union[Dict[str, Union[set, pyrogram.types.Message, str]], None]:
         text: str = message.text
         if text == '/download':
             await client.send_message(
@@ -166,12 +166,28 @@ class Bot:
         else:
             link: list = text.split()
             link.remove('/download') if '/download' in link else None
+
+            # 支持在末尾追加标签: /download 链接 [起始ID 结束ID] [标签]
+            tag: Union[str, None] = None
+            if link and not safe_index(link, -1, '').startswith('https://t.me/'):
+                # 如果最后一个不是链接, 可能为标签或数字
+                # 若为范围下载(两个数字), 不作为标签处理
+                # 在范围语法中，如果存在第4个参数则将其作为标签
+                if len(link) >= 4 and safe_index(link, 1, '').isdigit() and safe_index(link, 2, '').isdigit():
+                    tag = link[-1]
+                    link = link[:-1]
+                elif not (len(link) == 3 and safe_index(link, 1, '').isdigit() and safe_index(link, 2, '').isdigit()):
+                    # 非范围语法, 将最后一个参数作为标签
+                    tag = link[-1]
+                    link = link[:-1]
+
             if (
                     safe_index(link, 0, '').startswith('https://t.me/') and
-                    not safe_index(link, 1, 'https://t.me/').startswith('https://t.me/') and
-                    len(link) == 3
+                    safe_index(link, 1, '').isdigit() and
+                    safe_index(link, 2, '').isdigit() and
+                    len(link) >= 3
             ):
-                # v1.5.1 支持范围下载。
+                # v1.5.1 支持范围下载。可选第4个参数为标签。
                 start_id: int = int(safe_index(link, 1, -1))
                 end_id: int = int(safe_index(link, 2, -1))
                 if not await self.check_download_range(
@@ -198,7 +214,8 @@ class Bot:
                             right_link=right_link,
                             invalid_link=invalid_link if invalid_link else None
                         )
-                    )
+                    ),
+                    'tag': tag
                 }
             else:
                 return None
@@ -593,11 +610,12 @@ class Bot:
             self,
             client: pyrogram.Client,
             message: pyrogram.types.Message
-    ) -> Union[Dict[str, list], None]:
+    ) -> Union[Dict[str, Union[list, str]], None]:
         text: str = message.text
         args: list = text.split()
         command: str = args[0]
         links: list = args[1:]
+        tag: Union[str, None] = None
         if text.startswith('/listen_download'):
             if len(args) == 1:
                 await client.send_message(
@@ -610,6 +628,10 @@ class Bot:
                          f'`/listen_download https://t.me/A https://t.me/B https://t.me/n`\n'
                 )
                 return None
+            # 末尾可选标签: /listen_download 链接1 链接2 标签
+            if links and not links[-1].startswith('https://t.me/'):
+                tag = links[-1]
+                links = links[:-1]
             last_message: Union[pyrogram.types.Message, str, None] = None
             invalid_links: list = []
             for link in links:
@@ -701,7 +723,7 @@ class Bot:
                          f'`/listen_forward https://t.me/A https://t.me/B`\n'
                 )
                 return None
-        return {'command': command, 'links': links}
+        return {'command': command, 'links': links, 'tag': tag}
 
     @staticmethod
     async def listen_download(

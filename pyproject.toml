@@ -1,0 +1,18 @@
+[project]
+name = "telegram-restricted-media-downloader"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "gallery-dl>=1.30.10",
+    "kurigram==2.2.15",
+    "pygments>=2.19.2",
+    "pymediainfo==7.0.1",
+    "pyreadline3>=3.5.4",
+    "pyyaml>=6.0.3",
+    "qrcode>=8.2",
+    "rich>=14.2.0",
+    "tgcrypto>=1.2.5",
+    "yt-dlp>=2025.12.8",
+]

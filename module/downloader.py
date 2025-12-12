@@ -77,7 +77,9 @@ from module.util import (
     get_chat_with_notify,
     safe_message,
     truncate_display_filename,
-    Issues
+    Issues,
+    canonical_link_str,
+    canonical_link_message,
 )
 
 

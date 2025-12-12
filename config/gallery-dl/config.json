@@ -1,0 +1,149 @@
+{
+    "#": "gallery-dl default configuration file",
+    "#": "full documentation at",
+    "#": "https://gdl-org.github.io/docs/configuration.html",
+    "extractor": {
+        "#": "===============================================================",
+        "#": "====    General Extractor Options    ==========================",
+        "#": "(these can be set as site-specific extractor options as well)  ",
+        "base-directory": "/data",
+        "proxies": {
+            "http": "http://192.168.2.193:20171",
+            "https": "http://192.168.2.193:20171"
+        },
+        "#": "===============================================================",
+        "#": "====    Site-specific Extractor Options    ====================",
+        "instagram": {
+            "cookies": "/cookies/ins.txt",
+            "sleep-request": "6.0-12.0",
+            "api": "rest",
+            "cursor": true,
+            "include": "posts",
+            "max-posts": null,
+            "metadata": false,
+            "order-files": "asc",
+            "order-posts": "asc",
+            "previews": false,
+            "videos": true,
+            "warn-images": true,
+            "warn-videos": true,
+            "stories": {
+                "split": false
+            },
+            "directory": [
+                "Instagram",
+                "{user[name]}"
+            ],
+            "filename": "{shortcode}-{num}-{filename}.{extension}"
+        },
+        "iwara": {
+            "username": "kakoro",
+            "password": ";2wDEzkN)WdT@bH",
+            "directory": [
+                "Iwara",
+                "{user[name]}"
+            ],
+            "filename": "{id}-{num}-{filename}.{extension}",
+            "include": [
+                "user-images",
+                "user-images"
+            ]
+        },
+        "twitter": {
+            "cookies": "/cookies/x.txt",
+            "ads": false,
+            "cards": false,
+            "cards-blacklist": [],
+            "csrf": "cookies",
+            "expand": false,
+            "replies": false,
+            "retweets": false,
+            "search-pagination": "cursor",
+            "search-stop": "auto",
+            "text-tweets": false,
+            "tweet-endpoint": "auto",
+            "images": true,
+            "videos": true,
+            "directory": [
+                "Twitter",
+                "{user[name]}"
+            ],
+            "filename": "{tweet_id}-{num}-{filename}.{extension}"
+        },
+        "ytdl": {
+            "cmdline-args": null,
+            "config-file": null,
+            "deprecations": false,
+            "enabled": false,
+            "format": null,
+            "generic": true,
+            "generic-category": true,
+            "logging": true,
+            "module": null,
+            "raw-options": null
+        }
+    },
+    "#": "===================================================================",
+    "#": "====    Downloader Options    =====================================",
+    "downloader": {
+        "filesize-min": null,
+        "filesize-max": null,
+        "mtime": true,
+        "part": true,
+        "part-directory": null,
+        "progress": 3.0,
+        "rate": null,
+        "retries": 4,
+        "timeout": 30.0,
+        "verify": true,
+        "http": {
+            "adjust-extensions": true,
+            "chunk-size": 32768,
+            "consume-content": false,
+            "enabled": true,
+            "headers": null,
+            "retry-codes": [],
+            "sleep-429": 60.0,
+            "validate": true,
+            "validate-html": true
+        },
+        "ytdl": {
+            "cmdline-args": null,
+            "config-file": null,
+            "deprecations": false,
+            "enabled": true,
+            "format": null,
+            "forward-cookies": true,
+            "logging": true,
+            "module": null,
+            "outtmpl": null,
+            "raw-options": null
+        }
+    },
+    "#": "===================================================================",
+    "#": "====    Output Options    =========================================",
+    "output": {
+        "ansi": true,
+        "fallback": true,
+        "mode": "auto",
+        "private": false,
+        "progress": true,
+        "shorten": true,
+        "skip": true,
+        "stdin": null,
+        "stdout": null,
+        "stderr": null,
+        "log": "[{name}][{levelname}] {message}",
+        "logfile": null,
+        "errorfile": null,
+        "unsupportedfile": null,
+        "colors": {
+            "success": "1;32",
+            "skip": "2",
+            "debug": "0;37",
+            "info": "1;37",
+            "warning": "1;33",
+            "error": "1;31"
+        }
+    }
+}

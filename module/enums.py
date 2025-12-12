@@ -15,10 +15,10 @@ from module.language import _t
 
 
 class LinkType:
-    SINGLE: str = 'single'
-    GROUP: str = 'group'
-    COMMENT: str = 'comment'
-    TOPIC: str = 'topic'
+    SINGLE: str = "single"
+    GROUP: str = "group"
+    COMMENT: str = "comment"
+    TOPIC: str = "topic"
 
 
 @dataclass
@@ -31,255 +31,255 @@ class Link:
 
 
 class DownloadType:
-    VIDEO: str = 'video'
-    PHOTO: str = 'photo'
-    DOCUMENT: str = 'document'
-    AUDIO: str = 'audio'
-    VOICE: str = 'voice'
-    ANIMATION: str = 'animation'
+    VIDEO: str = "video"
+    PHOTO: str = "photo"
+    DOCUMENT: str = "document"
+    AUDIO: str = "audio"
+    VOICE: str = "voice"
+    ANIMATION: str = "animation"
 
     def __iter__(self):
         for key, value in vars(self.__class__).items():
-            if not key.startswith('_') and not callable(value):  # 排除特殊方法和属性。
+            if not key.startswith("_") and not callable(value):  # 排除特殊方法和属性。
                 yield value
 
 
 class DownloadStatus:
-    DOWNLOADING = 'downloading'
-    SUCCESS = 'success'
-    FAILURE = 'failure'
-    SKIP = 'skip'
-    RETRY = 'retry'
+    DOWNLOADING = "downloading"
+    SUCCESS = "success"
+    FAILURE = "failure"
+    SKIP = "skip"
+    RETRY = "retry"
 
 
 class UploadStatus:
-    UPLOADING = 'uploading'
-    SUCCESS = 'success'
-    FAILURE = 'failure'
+    UPLOADING = "uploading"
+    SUCCESS = "success"
+    FAILURE = "failure"
 
 
 class CalenderKeyboard:
-    START_TIME_BUTTON: str = 'start time button'
-    END_TIME_BUTTON: str = 'end time button'
+    START_TIME_BUTTON: str = "start time button"
+    END_TIME_BUTTON: str = "end time button"
 
 
 class SaveDirectoryPrefix:
-    CHAT_ID: str = '%CHAT_ID%'
-    MIME_TYPE: str = '%MIME_TYPE%'
+    CHAT_ID: str = "%CHAT_ID%"
+    MIME_TYPE: str = "%MIME_TYPE%"
 
     def __iter__(self):
         for key, value in vars(self.__class__).items():
-            if not key.startswith('_') and not callable(value):  # 排除特殊方法和属性。
+            if not key.startswith("_") and not callable(value):  # 排除特殊方法和属性。
                 yield value
 
 
 class KeyWord:
-    LINK: str = 'link'
-    LINK_TYPE: str = 'link type'
-    SIZE: str = 'size'
-    STATUS: str = 'status'
-    FILE: str = 'file'
-    ERROR_SIZE: str = 'error size'
-    ACTUAL_SIZE: str = 'actual size'
-    ALREADY_EXIST: str = 'already exist'
-    CHANNEL: str = 'channel'
-    MESSAGE_ID: str = 'message id'
-    TYPE: str = 'type'
-    RE_DOWNLOAD: str = 're-download'
-    RE_UPLOAD: str = 're-upload'
-    RETRY_TIMES: str = 'retry times'
-    CURRENT_DOWNLOAD_TASK: str = 'current download task'
-    CURRENT_UPLOAD_TASK: str = 'current upload task'
-    REASON: str = 'reason'
-    RESUME: str = 'resume'
-    DOWNLOAD_TASK: str = 'download task'
-    UPLOAD_TASK: str = 'upload task'
-    DOWNLOAD_AND_UPLOAD_TASK: str = 'download and upload task'
-    FORWARD_SUCCESS: str = 'forward success'
-    FORWARD_FAILURE: str = 'forward failure'
-    FORWARD_SKIP: str = 'skip forward'
+    LINK: str = "link"
+    LINK_TYPE: str = "link type"
+    SIZE: str = "size"
+    STATUS: str = "status"
+    FILE: str = "file"
+    ERROR_SIZE: str = "error size"
+    ACTUAL_SIZE: str = "actual size"
+    ALREADY_EXIST: str = "already exist"
+    CHANNEL: str = "channel"
+    MESSAGE_ID: str = "message id"
+    TYPE: str = "type"
+    RE_DOWNLOAD: str = "re-download"
+    RE_UPLOAD: str = "re-upload"
+    RETRY_TIMES: str = "retry times"
+    CURRENT_DOWNLOAD_TASK: str = "current download task"
+    CURRENT_UPLOAD_TASK: str = "current upload task"
+    REASON: str = "reason"
+    RESUME: str = "resume"
+    DOWNLOAD_TASK: str = "download task"
+    UPLOAD_TASK: str = "upload task"
+    DOWNLOAD_AND_UPLOAD_TASK: str = "download and upload task"
+    FORWARD_SUCCESS: str = "forward success"
+    FORWARD_FAILURE: str = "forward failure"
+    FORWARD_SKIP: str = "skip forward"
 
 
 class Extension:
     PHOTO = {
-        'image/avif': 'avif',
-        'image/bmp': 'bmp',
-        'image/gif': 'gif',
-        'image/ief': 'ief',
-        'image/jpg': 'jpg',
-        'image/jpeg': 'jpeg',
-        'image/heic': 'heic',
-        'image/heif': 'heif',
-        'image/png': 'png',
-        'image/svg+xml': 'svg',
-        'image/tiff': 'tif',
-        'image/vnd.microsoft.icon': 'ico',
-        'image/x-cmu-raster': 'ras',
-        'image/x-portable-anymap': 'pnm',
-        'image/x-portable-bitmap': 'pbm',
-        'image/x-portable-graymap': 'pgm',
-        'image/x-portable-pixmap': 'ppm',
-        'image/x-rgb': 'rgb',
-        'image/x-xbitmap': 'xbm',
-        'image/x-xpixmap': 'xpm',
-        'image/x-xwindowdump': 'xwd'
+        "image/avif": "avif",
+        "image/bmp": "bmp",
+        "image/gif": "gif",
+        "image/ief": "ief",
+        "image/jpg": "jpg",
+        "image/jpeg": "jpeg",
+        "image/heic": "heic",
+        "image/heif": "heif",
+        "image/png": "png",
+        "image/svg+xml": "svg",
+        "image/tiff": "tif",
+        "image/vnd.microsoft.icon": "ico",
+        "image/x-cmu-raster": "ras",
+        "image/x-portable-anymap": "pnm",
+        "image/x-portable-bitmap": "pbm",
+        "image/x-portable-graymap": "pgm",
+        "image/x-portable-pixmap": "ppm",
+        "image/x-rgb": "rgb",
+        "image/x-xbitmap": "xbm",
+        "image/x-xpixmap": "xpm",
+        "image/x-xwindowdump": "xwd",
     }
     VIDEO = {
-        'video/mp4': 'mp4',
-        'video/mpeg': 'mpg',
-        'video/quicktime': 'qt',
-        'video/webm': 'webm',
-        'video/x-msvideo': 'avi',
-        'video/x-sgi-movie': 'movie',
-        'video/x-matroska': 'mkv'
+        "video/mp4": "mp4",
+        "video/mpeg": "mpg",
+        "video/quicktime": "qt",
+        "video/webm": "webm",
+        "video/x-msvideo": "avi",
+        "video/x-sgi-movie": "movie",
+        "video/x-matroska": "mkv",
     }
     REVERSE_PHOTO = {
-        'avif': 'image/avif',
-        'bmp': 'image/bmp',
-        'gif': 'image/gif',
-        'ief': 'image/ief',
-        'jpg': 'image/jpg',
-        'jpeg': 'image/jpeg',
-        'heic': 'image/heic',
-        'heif': 'image/heif',
-        'png': 'image/png',
-        'svg': 'image/svg+xml',
-        'tif': 'image/tiff',
-        'ico': 'image/vnd.microsoft.icon',
-        'ras': 'image/x-cmu-raster',
-        'pnm': 'image/x-portable-anymap',
-        'pbm': 'image/x-portable-bitmap',
-        'pgm': 'image/x-portable-graymap',
-        'ppm': 'image/x-portable-pixmap',
-        'rgb': 'image/x-rgb',
-        'xbm': 'image/x-xbitmap',
-        'xpm': 'image/x-xpixmap',
-        'xwd': 'image/x-xwindowdump'
+        "avif": "image/avif",
+        "bmp": "image/bmp",
+        "gif": "image/gif",
+        "ief": "image/ief",
+        "jpg": "image/jpg",
+        "jpeg": "image/jpeg",
+        "heic": "image/heic",
+        "heif": "image/heif",
+        "png": "image/png",
+        "svg": "image/svg+xml",
+        "tif": "image/tiff",
+        "ico": "image/vnd.microsoft.icon",
+        "ras": "image/x-cmu-raster",
+        "pnm": "image/x-portable-anymap",
+        "pbm": "image/x-portable-bitmap",
+        "pgm": "image/x-portable-graymap",
+        "ppm": "image/x-portable-pixmap",
+        "rgb": "image/x-rgb",
+        "xbm": "image/x-xbitmap",
+        "xpm": "image/x-xpixmap",
+        "xwd": "image/x-xwindowdump",
     }
     REVERSE_VIDEO = {
-        'mp4': 'video/mp4',
-        'mpg': 'video/mpeg',
-        'qt': 'video/quicktime',
-        'webm': 'video/webm',
-        'avi': 'video/x-msvideo',
-        'movie': 'video/x-sgi-movie',
-        'mkv': 'video/x-matroska'
+        "mp4": "video/mp4",
+        "mpg": "video/mpeg",
+        "qt": "video/quicktime",
+        "webm": "video/webm",
+        "avi": "video/x-msvideo",
+        "movie": "video/x-sgi-movie",
+        "mkv": "video/x-matroska",
     }
     ALL_REVERSE = {
-        'avif': 'image/avif',
-        'bmp': 'image/bmp',
-        'gif': 'image/gif',
-        'ief': 'image/ief',
-        'jpg': 'image/jpg',
-        'jpeg': 'image/jpeg',
-        'heic': 'image/heic',
-        'heif': 'image/heif',
-        'png': 'image/png',
-        'svg': 'image/svg+xml',
-        'tif': 'image/tiff',
-        'ico': 'image/vnd.microsoft.icon',
-        'ras': 'image/x-cmu-raster',
-        'pnm': 'image/x-portable-anymap',
-        'pbm': 'image/x-portable-bitmap',
-        'pgm': 'image/x-portable-graymap',
-        'ppm': 'image/x-portable-pixmap',
-        'rgb': 'image/x-rgb',
-        'xbm': 'image/x-xbitmap',
-        'xpm': 'image/x-xpixmap',
-        'xwd': 'image/x-xwindowdump',
-        'video/mp4': 'mp4',
-        'video/mpeg': 'mpg',
-        'video/quicktime': 'qt',
-        'video/webm': 'webm',
-        'video/x-msvideo': 'avi',
-        'video/x-sgi-movie': 'movie',
-        'video/x-matroska': 'mkv'
+        "avif": "image/avif",
+        "bmp": "image/bmp",
+        "gif": "image/gif",
+        "ief": "image/ief",
+        "jpg": "image/jpg",
+        "jpeg": "image/jpeg",
+        "heic": "image/heic",
+        "heif": "image/heif",
+        "png": "image/png",
+        "svg": "image/svg+xml",
+        "tif": "image/tiff",
+        "ico": "image/vnd.microsoft.icon",
+        "ras": "image/x-cmu-raster",
+        "pnm": "image/x-portable-anymap",
+        "pbm": "image/x-portable-bitmap",
+        "pgm": "image/x-portable-graymap",
+        "ppm": "image/x-portable-pixmap",
+        "rgb": "image/x-rgb",
+        "xbm": "image/x-xbitmap",
+        "xpm": "image/x-xpixmap",
+        "xwd": "image/x-xwindowdump",
+        "video/mp4": "mp4",
+        "video/mpeg": "mpg",
+        "video/quicktime": "qt",
+        "video/webm": "webm",
+        "video/x-msvideo": "avi",
+        "video/x-sgi-movie": "movie",
+        "video/x-matroska": "mkv",
     }
 
 
 class GradientColor:
     # 生成渐变色:https://photokit.com/colors/color-gradient/?lang=zh
     BLUE2PURPLE_14 = [
-        '#0ebeff',
-        '#21b4f9',
-        '#33abf3',
-        '#46a1ed',
-        '#5898e8',
-        '#6b8ee2',
-        '#7d85dc',
-        '#907bd6',
-        '#a272d0',
-        '#b568ca',
-        '#c75fc5',
-        '#da55bf',
-        '#ec4cb9',
-        '#ff42b3'
+        "#0ebeff",
+        "#21b4f9",
+        "#33abf3",
+        "#46a1ed",
+        "#5898e8",
+        "#6b8ee2",
+        "#7d85dc",
+        "#907bd6",
+        "#a272d0",
+        "#b568ca",
+        "#c75fc5",
+        "#da55bf",
+        "#ec4cb9",
+        "#ff42b3",
     ]
     GREEN2PINK_11 = [
-        '#00ff40',
-        '#14f54c',
-        '#29eb58',
-        '#3de064',
-        '#52d670',
-        '#66cc7c',
-        '#7ac288',
-        '#8fb894',
-        '#a3ada0',
-        '#b8a3ac',
-        '#cc99b8'
+        "#00ff40",
+        "#14f54c",
+        "#29eb58",
+        "#3de064",
+        "#52d670",
+        "#66cc7c",
+        "#7ac288",
+        "#8fb894",
+        "#a3ada0",
+        "#b8a3ac",
+        "#cc99b8",
     ]
     GREEN2BLUE_10 = [
-        '#84fab0',
-        '#85f6b8',
-        '#86f1bf',
-        '#88edc7',
-        '#89e9ce',
-        '#8ae4d6',
-        '#8be0dd',
-        '#8ddce5',
-        '#8ed7ec',
-        '#8fd3f4'
+        "#84fab0",
+        "#85f6b8",
+        "#86f1bf",
+        "#88edc7",
+        "#89e9ce",
+        "#8ae4d6",
+        "#8be0dd",
+        "#8ddce5",
+        "#8ed7ec",
+        "#8fd3f4",
     ]
     YELLOW2GREEN_10 = [
-        '#d4fc79',
-        '#cdfa7d',
-        '#c6f782',
-        '#bff586',
-        '#b8f28b',
-        '#b2f08f',
-        '#abed94',
-        '#a4eb98',
-        '#9de89d',
-        '#96e6a1'
+        "#d4fc79",
+        "#cdfa7d",
+        "#c6f782",
+        "#bff586",
+        "#b8f28b",
+        "#b2f08f",
+        "#abed94",
+        "#a4eb98",
+        "#9de89d",
+        "#96e6a1",
     ]
     ORANGE2YELLOW_15 = [
-        '#f08a5d',
-        '#f1915e',
-        '#f1985f',
-        '#f29f60',
-        '#f3a660',
-        '#f3ad61',
-        '#f4b462',
-        '#f5bc63',
-        '#f5c364',
-        '#f6ca65',
-        '#f6d166',
-        '#f7d866',
-        '#f8df67',
-        '#f8e668',
-        '#f9ed69'
+        "#f08a5d",
+        "#f1915e",
+        "#f1985f",
+        "#f29f60",
+        "#f3a660",
+        "#f3ad61",
+        "#f4b462",
+        "#f5bc63",
+        "#f5c364",
+        "#f6ca65",
+        "#f6d166",
+        "#f7d866",
+        "#f8df67",
+        "#f8e668",
+        "#f9ed69",
     ]
     NEW_LIFE = [
-        '#43e97b',
-        '#42eb85',
-        '#41ed8f',
-        '#3fee9a',
-        '#3ef0a4',
-        '#3df2ae',
-        '#3cf4b8',
-        '#3af5c3',
-        '#39f7cd',
-        '#38f9d7'
+        "#43e97b",
+        "#42eb85",
+        "#41ed8f",
+        "#3fee9a",
+        "#3ef0a4",
+        "#3df2ae",
+        "#3cf4b8",
+        "#3af5c3",
+        "#39f7cd",
+        "#38f9d7",
     ]
 
     @staticmethod
@@ -301,17 +301,19 @@ class GradientColor:
         gradient_color_len: int = len(gradient_color)
         if text_lst_len > gradient_color_len:
             # 扩展颜色列表以适应文本长度
-            gradient_color = GradientColor.__extend_gradient_colors(gradient_color, text_lst_len)
-        result: str = ''
+            gradient_color = GradientColor.__extend_gradient_colors(
+                gradient_color, text_lst_len
+            )
+        result: str = ""
         for i in range(text_lst_len):
-            result += f'[{gradient_color[i]}]{text_lst[i]}[/{gradient_color[i]}]'
+            result += f"[{gradient_color[i]}]{text_lst[i]}[/{gradient_color[i]}]"
         return result
 
     @staticmethod
     def __hex_to_rgb(hex_color: str) -> tuple:
         """将十六进制颜色值转换为RGB元组。"""
-        hex_color = hex_color.lstrip('#')
-        return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+        hex_color = hex_color.lstrip("#")
+        return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
 
     @staticmethod
     def __rgb_to_hex(r: int, g: int, b: int) -> str:
@@ -337,27 +339,27 @@ class GradientColor:
 
 
 class Banner:
-    A = r'''
+    A = r"""
        ______           __  __                     _ __          
       / ____/__  ____  / /_/ /__  _________  _____(_) /____      
      / / __/ _ \/ __ \/ __/ / _ \/ ___/ __ \/ ___/ / __/ _ \     
     / /_/ /  __/ / / / /_/ /  __(__  ) /_/ / /  / / /_/  __/     
     \____/\___/_/ /_/\__/_/\___/____/ .___/_/  /_/\__/\___/      
                                    /_/                           
-        '''
-    B = r'''
+        """
+    B = r"""
     ╔═╗┌─┐┌┐┌┌┬┐┬  ┌─┐┌─┐┌─┐┬─┐┬┌┬┐┌─┐  
     ║ ╦├┤ │││ │ │  ├┤ └─┐├─┘├┬┘│ │ ├┤   
     ╚═╝└─┘┘└┘ ┴ ┴─┘└─┘└─┘┴  ┴└─┴ ┴ └─┘  
-        '''
-    C = r'''
+        """
+    C = r"""
      ██████╗ ███████╗███╗   ██╗████████╗██╗     ███████╗███████╗██████╗ ██████╗ ██╗████████╗███████╗    
     ██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝██║     ██╔════╝██╔════╝██╔══██╗██╔══██╗██║╚══██╔══╝██╔════╝    
     ██║  ███╗█████╗  ██╔██╗ ██║   ██║   ██║     █████╗  ███████╗██████╔╝██████╔╝██║   ██║   █████╗      
     ██║   ██║██╔══╝  ██║╚██╗██║   ██║   ██║     ██╔══╝  ╚════██║██╔═══╝ ██╔══██╗██║   ██║   ██╔══╝      
     ╚██████╔╝███████╗██║ ╚████║   ██║   ███████╗███████╗███████║██║     ██║  ██║██║   ██║   ███████╗    
      ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚══════╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝   ╚═╝   ╚══════╝           
-            '''
+            """
     D = r'''                                                                          
                                             ,,                                       ,,                    
       .g8"""bgd                      mm   `7MM                                       db   mm               
@@ -376,8 +378,8 @@ class Validator:
     @staticmethod
     def is_contain_chinese(text: str) -> bool:
         for ch in text:
-            if u'\u4e00' <= ch <= u'\u9fff':
-                log.warning('如果无法正常下载,请尝试不使用中文路径后重试。')
+            if "\u4e00" <= ch <= "\u9fff":
+                log.warning("如果无法正常下载,请尝试不使用中文路径后重试。")
                 return True
         return False
 
@@ -391,10 +393,12 @@ class Validator:
                     log.warning(f'意外的参数:"{api_id}",不是「纯数字」请重新输入!')
                     return False
             else:
-                log.warning(f'意外的参数,填写的"{api_id}"可能是「api_hash」,请填入正确的「api_id」!')
+                log.warning(
+                    f'意外的参数,填写的"{api_id}"可能是「api_hash」,请填入正确的「api_id」!'
+                )
                 return False
         except (AttributeError, TypeError):
-            log.error('手动编辑config.yaml时,api_id需要有引号!')
+            log.error("手动编辑config.yaml时,api_id需要有引号!")
             return False
 
     @staticmethod
@@ -402,14 +406,14 @@ class Validator:
         return len(str(api_hash)) == valid_length
 
     @staticmethod
-    def is_valid_bot_token(bot_token: str, valid_format: str = ':') -> bool:
+    def is_valid_bot_token(bot_token: str, valid_format: str = ":") -> bool:
         if valid_format in bot_token:
             return True
         else:
             return False
 
     @staticmethod
-    def is_valid_links_file(file_path: str, valid_format: str = '.txt') -> bool:
+    def is_valid_links_file(file_path: str, valid_format: str = ".txt") -> bool:
         file_path = os.path.normpath(file_path)
         return os.path.isfile(file_path) and file_path.endswith(valid_format)
 
@@ -417,17 +421,23 @@ class Validator:
     def is_valid_save_directory(save_directory: str) -> bool:
         for placeholder in SaveDirectoryPrefix():
             if placeholder in save_directory:
-                save_directory = save_directory.replace(placeholder, '')
+                save_directory = save_directory.replace(placeholder, "")
         save_directory = os.path.normpath(save_directory)
         if not os.path.exists(save_directory):
             while True:
                 try:
-                    question = console.input(f'目录:"{save_directory}"不存在,是否创建? - 「y|n」(默认y):').strip().lower()
-                    if question in ('y', ''):
+                    question = (
+                        console.input(
+                            f'目录:"{save_directory}"不存在,是否创建? - 「y|n」(默认y):'
+                        )
+                        .strip()
+                        .lower()
+                    )
+                    if question in ("y", ""):
                         os.makedirs(save_directory, exist_ok=True)
                         console.log(f'成功创建目录:"{save_directory}"')
                         break
-                    elif question == 'n':
+                    elif question == "n":
                         break
                     else:
                         log.warning(f'意外的参数:"{question}",支持的参数 - 「y|n」')
@@ -447,7 +457,7 @@ class Validator:
 
     @staticmethod
     def is_valid_enable_proxy(enable_proxy: Union[str, bool]) -> bool:
-        if enable_proxy in ('y', 'n'):
+        if enable_proxy in ("y", "n"):
             return True
 
     @staticmethod
@@ -512,21 +522,21 @@ class ProcessConfig:
         if color is None:
             color = GradientColor.ORANGE2YELLOW_15
         _stdio_queue: dict = {
-            'api_id': 0,
-            'api_hash': 1,
-            'bot_token': 2,
-            'links': 3,
-            'save_directory': 4,
-            'max_download_task': 5,
-            'max_retry_count': 6,
-            'download_type': 7,
-            'is_shutdown': 8,
-            'enable_proxy': 9,
-            'config_proxy': 10,
-            'scheme': 11,
-            'hostname': 12,
-            'port': 13,
-            'proxy_authentication': 14
+            "api_id": 0,
+            "api_hash": 1,
+            "bot_token": 2,
+            "links": 3,
+            "save_directory": 4,
+            "max_download_task": 5,
+            "max_retry_count": 6,
+            "download_type": 7,
+            "is_shutdown": 8,
+            "enable_proxy": 9,
+            "config_proxy": 10,
+            "scheme": 11,
+            "hostname": 12,
+            "port": 13,
+            "proxy_authentication": 14,
         }
         return color[_stdio_queue.get(key)]
 
@@ -536,85 +546,96 @@ class ProcessConfig:
         result: bool = False
         basic_truth_table: list = []
         advance_account_truth_table: list = []
-        if proxy_config.get('enable_proxy') is False:  # 检测打开了代理但是代理配置错误。
+        if (
+            proxy_config.get("enable_proxy") is False
+        ):  # 检测打开了代理但是代理配置错误。
             return False
         for _ in proxy_config.items():
-            if _[0] in ['scheme', 'port', 'hostname']:
+            if _[0] in ["scheme", "port", "hostname"]:
                 basic_truth_table.append(_[1])
-            if _[0] in ['username', 'password']:
+            if _[0] in ["username", "password"]:
                 advance_account_truth_table.append(_[1])
         if all(basic_truth_table) is False:
-            console.print('请配置代理!', style=ProcessConfig.stdio_style('config_proxy'))
             console.print(
-                '[#79FCD4]如果对代理配置有疑问[/#79FCD4][#FF79D4]请访问:[/#FF79D4]\n'
-                '[link=https://github.com/Gentlesprite/Telegram_Restricted_Media_Downloader/wiki#配置代理时在代理在本机的情况下]'
-                'https://github.com/Gentlesprite/Telegram_Restricted_Media_Downloader/wiki#配置代理时在代理在本机的情况下[/link]'
-                '\n[#FCFF79]若[/#FCFF79][#FF4689]无法[/#FF4689][#FF7979]访问[/#FF7979][#79FCD4],[/#79FCD4]'
-                '[#FCFF79]可[/#FCFF79][#d4fc79]查阅[/#d4fc79]'
+                "请配置代理!", style=ProcessConfig.stdio_style("config_proxy")
+            )
+            console.print(
+                "[#79FCD4]如果对代理配置有疑问[/#79FCD4][#FF79D4]请访问:[/#FF79D4]\n"
+                "[link=https://github.com/Gentlesprite/Telegram_Restricted_Media_Downloader/wiki#配置代理时在代理在本机的情况下]"
+                "https://github.com/Gentlesprite/Telegram_Restricted_Media_Downloader/wiki#配置代理时在代理在本机的情况下[/link]"
+                "\n[#FCFF79]若[/#FCFF79][#FF4689]无法[/#FF4689][#FF7979]访问[/#FF7979][#79FCD4],[/#79FCD4]"
+                "[#FCFF79]可[/#FCFF79][#d4fc79]查阅[/#d4fc79]"
                 '[#FC79A5]软件压缩包所提供的[/#FC79A5][#79E2FC]"使用手册"[/#79E2FC]'
                 '[#79FCD4]文件夹下的[/#79FCD4][#FFB579]"常见问题及解决方案汇总.pdf"[/#FFB579]'
-                '[#79FCB5]中的[/#79FCB5][#D479FC]【问题14】里的【解决方案】[/#D479FC][#FCE679]进行操作[/#FCE679][#FC79A6]。[/#FC79A6]'
+                "[#79FCB5]中的[/#79FCB5][#D479FC]【问题14】里的【解决方案】[/#D479FC][#FCE679]进行操作[/#FCE679][#FC79A6]。[/#FC79A6]"
             )
             result: bool = True
-        if any(advance_account_truth_table) and all(advance_account_truth_table) is False:
-            log.warning('代理账号或密码未输入!')
+        if (
+            any(advance_account_truth_table)
+            and all(advance_account_truth_table) is False
+        ):
+            log.warning("代理账号或密码未输入!")
             result: bool = True
         return result
 
     @staticmethod
     def get_proxy_info(proxy_config: dict) -> dict:
         return {
-            'scheme': proxy_config.get('scheme', '未知'),
-            'hostname': proxy_config.get('hostname', '未知'),
-            'port': proxy_config.get('port', '未知')
+            "scheme": proxy_config.get("scheme", "未知"),
+            "hostname": proxy_config.get("hostname", "未知"),
+            "port": proxy_config.get("port", "未知"),
         }
 
 
 class GetStdioParams:
-    UNDEFINED: str = '无'
+    UNDEFINED: str = "无"
 
     @staticmethod
     def __timeout_input(
-            prompt: str = '',
-            error_prompt: Union[str, None] = None,
-            default: str = '',
-            timeout: int = 5
+        prompt: str = "",
+        error_prompt: Union[str, None] = None,
+        default: str = "",
+        timeout: int = 5,
     ) -> str:
         """跨平台的输入超时后自动设置为默认值,报错时返回默认input。"""
 
         def timeout_notice():
-            console.print('\n输入超时,已自动设置为默认值。\n', style='#FF4689')
+            console.print("\n输入超时,已自动设置为默认值。\n", style="#FF4689")
 
         try:
-            if sys.platform == 'win32':
+            if sys.platform == "win32":
                 import time
                 import msvcrt
-                console.print(prompt, end='')
+
+                console.print(prompt, end="")
                 start_time: float = time.time()
                 input_buffer: list = []
 
                 while True:
                     if msvcrt.kbhit():  # 检测是否有键盘输入。
                         char = msvcrt.getwch()
-                        if char == '\r':  # 回车键结束输入。
-                            user_input = ''.join(input_buffer)
-                            print('\n') if user_input in ('y', 'n', '') else None
+                        if char == "\r":  # 回车键结束输入。
+                            user_input = "".join(input_buffer)
+                            print("\n") if user_input in ("y", "n", "") else None
                             return user_input.strip() or default
-                        elif char in ('\x08', '\b'):  # Backspace 键处理。
+                        elif char in ("\x08", "\b"):  # Backspace 键处理。
                             if input_buffer:
                                 input_buffer.pop()
-                                print('\b \b', end='', flush=True)  # 删除控制台上的最后一个字符。
-                        elif char in ('\x00', '\xe0'):  # 上下左右键。
+                                print(
+                                    "\b \b", end="", flush=True
+                                )  # 删除控制台上的最后一个字符。
+                        elif char in ("\x00", "\xe0"):  # 上下左右键。
                             _ = msvcrt.getwch()
                         else:
                             input_buffer.append(char)
-                            console.print(char, end='')
+                            console.print(char, end="")
                     elif time.time() - start_time > timeout:
                         timeout_notice()
                         return default
                     time.sleep(0.1)
             else:
                 import select
+
                 sys.stdout.write(prompt)
                 sys.stdout.flush()
                 ready, _, _ = select.select([sys.stdin], [], [], timeout)
@@ -627,216 +648,281 @@ class GetStdioParams:
             return console.input(error_prompt if error_prompt else prompt)
 
     @staticmethod
-    def get_is_ki_save_config(valid_format: str = 'y|n') -> dict:
+    def get_is_ki_save_config(valid_format: str = "y|n") -> dict:
         while True:
-            is_save_config: str = console.input(
-                f'「退出提示」是否需要保存当前已填写的参数? - 「{valid_format}」:').strip().lower()
-            if is_save_config == 'y':
-                return {'is_ki_save_config': True}
-            elif is_save_config == 'n':
-                return {'is_ki_save_config': False}
+            is_save_config: str = (
+                console.input(
+                    f"「退出提示」是否需要保存当前已填写的参数? - 「{valid_format}」:"
+                )
+                .strip()
+                .lower()
+            )
+            if is_save_config == "y":
+                return {"is_ki_save_config": True}
+            elif is_save_config == "n":
+                return {"is_ki_save_config": False}
             else:
-                log.warning(f'意外的参数:"{is_save_config}",支持的参数 - 「{valid_format}」')
+                log.warning(
+                    f'意外的参数:"{is_save_config}",支持的参数 - 「{valid_format}」'
+                )
 
     @staticmethod
-    def get_is_re_config(valid_format: str = 'y|n') -> dict:
-        prompt: str = f'检测到已配置完成的配置文件,是否需要重新配置?(之前的配置文件将为你备份到当前目录下) - 「{valid_format}」'
+    def get_is_re_config(valid_format: str = "y|n") -> dict:
+        prompt: str = f"检测到已配置完成的配置文件,是否需要重新配置?(之前的配置文件将为你备份到当前目录下) - 「{valid_format}」"
         timeout: int = 5
         while True:
-            is_re_config: str = GetStdioParams.__timeout_input(
-                prompt=f'{prompt}({timeout}秒后自动设置为默认n):',
-                error_prompt=f'{prompt}(默认n):',
-                default='n',
-                timeout=timeout
-            ).strip().lower()
-            if is_re_config == 'y':
-                return {'is_re_config': True}
-            elif is_re_config in ('n', ''):
-                return {'is_re_config': False}
+            is_re_config: str = (
+                GetStdioParams.__timeout_input(
+                    prompt=f"{prompt}({timeout}秒后自动设置为默认n):",
+                    error_prompt=f"{prompt}(默认n):",
+                    default="n",
+                    timeout=timeout,
+                )
+                .strip()
+                .lower()
+            )
+            if is_re_config == "y":
+                return {"is_re_config": True}
+            elif is_re_config in ("n", ""):
+                return {"is_re_config": False}
             else:
-                console.print('\n') if sys.platform == 'win32' else None
-                log.warning(f'意外的参数:"{is_re_config}",支持的参数 - 「{valid_format}」(默认n)')
+                console.print("\n") if sys.platform == "win32" else None
+                log.warning(
+                    f'意外的参数:"{is_re_config}",支持的参数 - 「{valid_format}」(默认n)'
+                )
 
     @staticmethod
-    def get_is_change_account(valid_format: str = 'y|n') -> dict:
-        style: str = '#FF4689'
+    def get_is_change_account(valid_format: str = "y|n") -> dict:
+        style: str = "#FF4689"
         while True:
-            is_change_account = console.input('是否需要切换账号? - 「y|n」(默认n):').strip().lower()
-            if is_change_account in ('n', ''):
-                console.print('用户不需要切换「账号」。', style=style)
-                return {'is_change_account': False}
-            elif is_change_account == 'y':
-                console.print('用户需要切换「账号」。', style=style)
-                return {'is_change_account': True}
+            is_change_account = (
+                console.input("是否需要切换账号? - 「y|n」(默认n):").strip().lower()
+            )
+            if is_change_account in ("n", ""):
+                console.print("用户不需要切换「账号」。", style=style)
+                return {"is_change_account": False}
+            elif is_change_account == "y":
+                console.print("用户需要切换「账号」。", style=style)
+                return {"is_change_account": True}
             else:
-                log.warning(f'意外的参数:"{is_change_account}",支持的参数 - 「{valid_format}」!')
+                log.warning(
+                    f'意外的参数:"{is_change_account}",支持的参数 - 「{valid_format}」!'
+                )
 
     @staticmethod
     def get_api_id(last_record: str) -> dict:
         while True:
             api_id = console.input(
-                f'请输入「api_id」上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」:').strip()
-            if api_id == '' and last_record is not None:
+                f"请输入「api_id」上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」:"
+            ).strip()
+            if api_id == "" and last_record is not None:
                 api_id = last_record
             if Validator.is_valid_api_id(api_id):
-                console.print(f'已设置「api_id」为:「{api_id}」', style=ProcessConfig.stdio_style('api_id'))
-                return {
-                    'api_id': api_id,
-                    'record_flag': True
-                }
+                console.print(
+                    f"已设置「api_id」为:「{api_id}」",
+                    style=ProcessConfig.stdio_style("api_id"),
+                )
+                return {"api_id": api_id, "record_flag": True}
 
     @staticmethod
     def get_api_hash(last_record: str, valid_length: int = 32) -> dict:
         while True:
-            api_hash = console.input(
-                f'请输入「api_hash」上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」:').strip().lower()
-            if api_hash == '' and last_record is not None:
+            api_hash = (
+                console.input(
+                    f"请输入「api_hash」上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」:"
+                )
+                .strip()
+                .lower()
+            )
+            if api_hash == "" and last_record is not None:
                 api_hash = last_record
             if Validator.is_valid_api_hash(api_hash, valid_length):
-                console.print(f'已设置「api_hash」为:「{api_hash}」', style=ProcessConfig.stdio_style('api_hash'))
-                return {
-                    'api_hash': api_hash,
-                    'record_flag': True
-                }
+                console.print(
+                    f"已设置「api_hash」为:「{api_hash}」",
+                    style=ProcessConfig.stdio_style("api_hash"),
+                )
+                return {"api_hash": api_hash, "record_flag": True}
             else:
-                log.warning(f'意外的参数:"{api_hash}",不是一个「{valid_length}位」的「值」!请重新输入!')
+                log.warning(
+                    f'意外的参数:"{api_hash}",不是一个「{valid_length}位」的「值」!请重新输入!'
+                )
 
     @staticmethod
-    def get_enable_bot(valid_format: str = 'y|n') -> dict:
+    def get_enable_bot(valid_format: str = "y|n") -> dict:
         while True:
-            enable_bot = console.input('是否启用「机器人」(需要提供bot_token)? - 「y|n」(默认n):').strip().lower()
-            if enable_bot in ('n', ''):
-                console.print(f'已设置为不启用「机器人」。', style=ProcessConfig.stdio_style('bot_token'))
-                return {'enable_bot': False}
-            elif enable_bot == 'y':
-                console.print(f'请配置「bot_token」。', style=ProcessConfig.stdio_style('bot_token'))
-                return {'enable_bot': True}
+            enable_bot = (
+                console.input(
+                    "是否启用「机器人」(需要提供bot_token)? - 「y|n」(默认n):"
+                )
+                .strip()
+                .lower()
+            )
+            if enable_bot in ("n", ""):
+                console.print(
+                    f"已设置为不启用「机器人」。",
+                    style=ProcessConfig.stdio_style("bot_token"),
+                )
+                return {"enable_bot": False}
+            elif enable_bot == "y":
+                console.print(
+                    f"请配置「bot_token」。",
+                    style=ProcessConfig.stdio_style("bot_token"),
+                )
+                return {"enable_bot": True}
             else:
-                log.warning(f'意外的参数:"{enable_bot}",支持的参数 - 「{valid_format}」!')
+                log.warning(
+                    f'意外的参数:"{enable_bot}",支持的参数 - 「{valid_format}」!'
+                )
 
     @staticmethod
-    def get_bot_token(last_record: str, valid_format: str = ':') -> dict:
+    def get_bot_token(last_record: str, valid_format: str = ":") -> dict:
         while True:
             bot_token = console.input(
-                f'请输入当前账号的「bot_token」上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」:').strip()
-            if bot_token == '' and last_record is not None:
+                f"请输入当前账号的「bot_token」上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」:"
+            ).strip()
+            if bot_token == "" and last_record is not None:
                 bot_token = last_record
             if Validator.is_valid_bot_token(bot_token, valid_format):
-                console.print(f'已设置「bot_token」为:「{bot_token}」', style=ProcessConfig.stdio_style('bot_token'))
-                return {
-                    'bot_token': bot_token,
-                    'record_flag': True
-                }
+                console.print(
+                    f"已设置「bot_token」为:「{bot_token}」",
+                    style=ProcessConfig.stdio_style("bot_token"),
+                )
+                return {"bot_token": bot_token, "record_flag": True}
             else:
-                log.warning(f'意外的参数:"{bot_token}",「bot_token」中需要包含":",请重新输入!')
+                log.warning(
+                    f'意外的参数:"{bot_token}",「bot_token」中需要包含":",请重新输入!'
+                )
 
     @staticmethod
-    def get_links(last_record: str, valid_format: str = '.txt', enable_bot: bool = False) -> dict:
+    def get_links(
+        last_record: str, valid_format: str = ".txt", enable_bot: bool = False
+    ) -> dict:
         # 输入需要下载的媒体链接文件路径,确保文件存在。
         links_file_path = None
         while True:
             try:
-                bot_notice = '(检测到已配置机器人,此步骤可忽略)' if enable_bot else ''
+                bot_notice = "(检测到已配置机器人,此步骤可忽略)" if enable_bot else ""
                 links_file_path = console.input(
-                    f'请输入需要下载的媒体链接的「完整路径」。上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」'
-                    f'格式 - 「{valid_format}」{bot_notice}:').strip()
-                if links_file_path == '':
+                    f"请输入需要下载的媒体链接的「完整路径」。上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」"
+                    f"格式 - 「{valid_format}」{bot_notice}:"
+                ).strip()
+                if links_file_path == "":
                     if last_record is not None:
                         links_file_path = last_record
                     elif bot_notice:
-                        links_file_path = os.path.join(os.getcwd(), 'links.txt')
+                        links_file_path = os.path.join(os.getcwd(), "links.txt")
                 if links_file_path and not os.path.exists(links_file_path):
                     try:
-                        with open(file=links_file_path, mode='w', encoding='UTF-8'):
+                        with open(file=links_file_path, mode="w", encoding="UTF-8"):
                             pass
                     except Exception as e:
-                        log.warning(f'无法创建文件:"{links_file_path}"请排查权限问题,{_t(KeyWord.REASON)}:"{e}"')
+                        log.warning(
+                            f'无法创建文件:"{links_file_path}"请排查权限问题,{_t(KeyWord.REASON)}:"{e}"'
+                        )
                 if Validator.is_valid_links_file(links_file_path, valid_format):
-                    console.print(f'已设置「links」为:「{links_file_path}」', style=ProcessConfig.stdio_style('links'))
+                    console.print(
+                        f"已设置「links」为:「{links_file_path}」",
+                        style=ProcessConfig.stdio_style("links"),
+                    )
                     Validator.is_contain_chinese(links_file_path)
-                    return {
-                        'links': links_file_path,
-                        'record_flag': True
-                    }
-                elif not os.path.normpath(links_file_path).lower().endswith('.txt'):
-                    log.warning(f'意外的参数:"{links_file_path}",文件路径必须以「{valid_format}」结尾,请重新输入!')
+                    return {"links": links_file_path, "record_flag": True}
+                elif not os.path.normpath(links_file_path).lower().endswith(".txt"):
+                    log.warning(
+                        f'意外的参数:"{links_file_path}",文件路径必须以「{valid_format}」结尾,请重新输入!'
+                    )
                 else:
                     log.warning(
-                        f'意外的参数:"{links_file_path}",文件「必须存在」(区分大小写),请重新输入!')
+                        f'意外的参数:"{links_file_path}",文件「必须存在」(区分大小写),请重新输入!'
+                    )
             except Exception as e:
                 log.warning(
-                    f'意外的参数:"{links_file_path}",文件路径必须以「{valid_format}」结尾,并且「必须存在」,请重新输入!{_t(KeyWord.REASON)}:"{e}"')
+                    f'意外的参数:"{links_file_path}",文件路径必须以「{valid_format}」结尾,并且「必须存在」,请重新输入!{_t(KeyWord.REASON)}:"{e}"'
+                )
 
     @staticmethod
     def get_save_directory(last_record) -> dict:
         # 输入媒体保存路径,确保是一个有效的目录路径。
         while True:
             save_directory = console.input(
-                f'请输入媒体「保存路径」。上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」:').strip()
-            if save_directory == '':
+                f"请输入媒体「保存路径」。上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」:"
+            ).strip()
+            if save_directory == "":
                 if last_record is not None:
                     save_directory = last_record
                 else:
-                    save_directory = os.path.join(os.getcwd(), 'downloads')
-                    log.warning('没有上一次的记录,已设置为默认目录。')
+                    save_directory = os.path.join(os.getcwd(), "downloads")
+                    log.warning("没有上一次的记录,已设置为默认目录。")
             if Validator.is_valid_save_directory(save_directory):
-                console.print(f'已设置「save_directory」为:「{save_directory}」',
-                              style=ProcessConfig.stdio_style('save_directory'))
+                console.print(
+                    f"已设置「save_directory」为:「{save_directory}」",
+                    style=ProcessConfig.stdio_style("save_directory"),
+                )
                 Validator.is_contain_chinese(save_directory)
-                return {
-                    'save_directory': save_directory,
-                    'record_flag': True
-                }
+                return {"save_directory": save_directory, "record_flag": True}
             elif os.path.isfile(save_directory):
-                log.warning(f'意外的参数:"{save_directory}",指定的路径是一个文件并非目录,请重新输入!')
+                log.warning(
+                    f'意外的参数:"{save_directory}",指定的路径是一个文件并非目录,请重新输入!'
+                )
             else:
-                log.warning(f'意外的参数:"{save_directory}",指定的路径无效或不是一个目录,请重新输入!')
+                log.warning(
+                    f'意外的参数:"{save_directory}",指定的路径无效或不是一个目录,请重新输入!'
+                )
 
     @staticmethod
     def get_max_download_task(last_record) -> dict:
         # 输入最大下载任务数,确保是一个整数且不超过特定限制。
-        default_prompt: str = '(默认5)' if last_record is None else ''
+        default_prompt: str = "(默认5)" if last_record is None else ""
         while True:
             try:
                 max_download_task = console.input(
-                    f'请输入「最大下载任务数」。上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」'
-                    f',值过高可能会导致网络相关问题,建议默认{default_prompt}:').strip()
-                if max_download_task == '' and last_record is not None:
+                    f"请输入「最大下载任务数」。上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」"
+                    f",值过高可能会导致网络相关问题,建议默认{default_prompt}:"
+                ).strip()
+                if max_download_task == "" and last_record is not None:
                     max_download_task = last_record
-                if max_download_task == '':
+                if max_download_task == "":
                     max_download_task = 5
                 if Validator.is_valid_number(max_download_task):
-                    console.print(f'已设置「max_download_task」为:「{max_download_task}」',
-                                  style=ProcessConfig.stdio_style('max_download_task'))
+                    console.print(
+                        f"已设置「max_download_task」为:「{max_download_task}」",
+                        style=ProcessConfig.stdio_style("max_download_task"),
+                    )
                     return {
-                        'max_download_task': int(max_download_task),
-                        'record_flag': True
+                        "max_download_task": int(max_download_task),
+                        "record_flag": True,
                     }
                 else:
-                    log.warning(f'意外的参数:"{max_download_task}",任务数必须是「正整数」,请重新输入!')
+                    log.warning(
+                        f'意外的参数:"{max_download_task}",任务数必须是「正整数」,请重新输入!'
+                    )
             except Exception as e:
                 log.error(f'意外的错误,{_t(KeyWord.REASON)}:"{e}"')
 
     @staticmethod
     def get_max_retry_count(last_record) -> dict:
-        default_prompt: str = '(默认5)' if last_record is None else ''
+        default_prompt: str = "(默认5)" if last_record is None else ""
         while True:
             try:
                 max_retry_count = console.input(
-                    f'请输入任务失败时「最大重试次数」。上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」{default_prompt}:').strip()
-                if max_retry_count == '' and last_record is not None:
+                    f"请输入任务失败时「最大重试次数」。上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」{default_prompt}:"
+                ).strip()
+                if max_retry_count == "" and last_record is not None:
                     max_retry_count = last_record
-                if max_retry_count == '':
+                if max_retry_count == "":
                     max_retry_count = 5
                 if Validator.is_valid_number(max_retry_count):
-                    console.print(f'已设置「max_retry_count」为:「{max_retry_count}」',
-                                  style=ProcessConfig.stdio_style('max_retry_count'))
+                    console.print(
+                        f"已设置「max_retry_count」为:「{max_retry_count}」",
+                        style=ProcessConfig.stdio_style("max_retry_count"),
+                    )
                     return {
-                        'max_retry_count': int(max_retry_count),
-                        'record_flag': True
+                        "max_retry_count": int(max_retry_count),
+                        "record_flag": True,
                     }
                 else:
-                    log.warning(f'意外的参数:"{max_retry_count}",最大重试次数必须是「正整数」,请重新输入!')
+                    log.warning(
+                        f'意外的参数:"{max_retry_count}",最大重试次数必须是「正整数」,请重新输入!'
+                    )
             except Exception as e:
                 log.error(f'意外的错误,{_t(KeyWord.REASON)}:"{e}"')
 
@@ -849,121 +935,168 @@ class GetStdioParams:
                 dtype, _ = i
                 if meta.get(dtype) is True:
                     record.append(dtype)
-            last_record: str = ' '.join(record)
-        default_prompt: str = '(默认为所有已支持的下载类型)' if last_record is None else ''
+            last_record: str = " ".join(record)
+        default_prompt: str = (
+            "(默认为所有已支持的下载类型)" if last_record is None else ""
+        )
         while True:
             download_type: Union[str, list] = console.input(
-                f'输入需要下载的「媒体类型」(以空格分隔可多选)。上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」'
-                f'格式 - 「video photo document audio voice animation」{default_prompt}:').strip()
-            if download_type == '' and last_record is not None:
+                f"输入需要下载的「媒体类型」(以空格分隔可多选)。上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」"
+                f"格式 - 「video photo document audio voice animation」{default_prompt}:"
+            ).strip()
+            if download_type == "" and last_record is not None:
                 download_type = last_record
-            if download_type == '':
+            if download_type == "":
                 download_type = [_ for _ in DownloadType()]
-            download_type: list = list(set(download_type.split())) if isinstance(download_type, str) else download_type
+            download_type: list = (
+                list(set(download_type.split()))
+                if isinstance(download_type, str)
+                else download_type
+            )
             if Validator.is_valid_download_type(download_type):
-                dtype = ' '.join(download_type) if download_type else [_ for _ in DownloadType()]
+                dtype = (
+                    " ".join(download_type)
+                    if download_type
+                    else [_ for _ in DownloadType()]
+                )
                 console.print(
-                    f'已设置「download_type」为:「{dtype}」',
-                    style=ProcessConfig.stdio_style('download_type')
+                    f"已设置「download_type」为:「{dtype}」",
+                    style=ProcessConfig.stdio_style("download_type"),
                 )
                 return {
-                    'download_type': ProcessConfig.set_dtype(_dtype=download_type),
-                    'record_flag': True
+                    "download_type": ProcessConfig.set_dtype(_dtype=download_type),
+                    "record_flag": True,
                 }
             else:
-                prompt: str = f'意外的参数:"{download_type}"' if download_type else '请重新输入下载类型'
-                log.warning(f'{prompt},支持的参数 - 「video photo document」(以空格分隔可多选)')
+                prompt: str = (
+                    f'意外的参数:"{download_type}"'
+                    if download_type
+                    else "请重新输入下载类型"
+                )
+                log.warning(
+                    f"{prompt},支持的参数 - 「video photo document」(以空格分隔可多选)"
+                )
 
     @staticmethod
-    def get_is_shutdown(last_record: str, valid_format: str = 'y|n') -> dict:
-        _style: str = ProcessConfig.stdio_style('is_shutdown')
+    def get_is_shutdown(last_record: str, valid_format: str = "y|n") -> dict:
+        _style: str = ProcessConfig.stdio_style("is_shutdown")
         if last_record:
-            last_record: str = 'y'
+            last_record: str = "y"
         elif last_record is False:
-            last_record: str = 'n'
+            last_record: str = "n"
         else:
             last_record = GetStdioParams.UNDEFINED
-        t = f'已设置「is_shutdown」为:「y」,下载完成后将自动关机!'  # v1.3.0 修复配置is_shutdown参数时显示错误。
-        f = f'已设置「is_shutdown」为:「n」'
-        default_prompt: str = '(默认n)' if last_record == GetStdioParams.UNDEFINED else ''
+        t = f"已设置「is_shutdown」为:「y」,下载完成后将自动关机!"  # v1.3.0 修复配置is_shutdown参数时显示错误。
+        f = f"已设置「is_shutdown」为:「n」"
+        default_prompt: str = (
+            "(默认n)" if last_record == GetStdioParams.UNDEFINED else ""
+        )
         while True:
             try:
-                is_shutdown = console.input(
-                    f'下载完成后是否「自动关机」。上一次的记录是:「{last_record}」 - 「{valid_format}」'
-                    f'{default_prompt}:').strip().lower()
-                if is_shutdown == '' and last_record != GetStdioParams.UNDEFINED:
-                    if last_record == 'y':
+                is_shutdown = (
+                    console.input(
+                        f"下载完成后是否「自动关机」。上一次的记录是:「{last_record}」 - 「{valid_format}」"
+                        f"{default_prompt}:"
+                    )
+                    .strip()
+                    .lower()
+                )
+                if is_shutdown == "" and last_record != GetStdioParams.UNDEFINED:
+                    if last_record == "y":
                         console.print(t, style=_style)
-                        return {'is_shutdown': True, 'record_flag': True}
-                    elif last_record == 'n':
+                        return {"is_shutdown": True, "record_flag": True}
+                    elif last_record == "n":
                         console.print(f, style=_style)
-                        return {'is_shutdown': False, 'record_flag': True}
+                        return {"is_shutdown": False, "record_flag": True}
 
-                elif is_shutdown == 'y':
+                elif is_shutdown == "y":
                     console.print(t, style=_style)
-                    return {'is_shutdown': True, 'record_flag': True}
-                elif is_shutdown in ('n', ''):
+                    return {"is_shutdown": True, "record_flag": True}
+                elif is_shutdown in ("n", ""):
                     console.print(f, style=_style)
-                    return {'is_shutdown': False, 'record_flag': True}
+                    return {"is_shutdown": False, "record_flag": True}
                 else:
-                    log.warning(f'意外的参数:"{is_shutdown}",支持的参数 - 「{valid_format}」')
+                    log.warning(
+                        f'意外的参数:"{is_shutdown}",支持的参数 - 「{valid_format}」'
+                    )
 
             except Exception as e:
                 log.error(f'意外的错误,{_t(KeyWord.REASON)}:"{e}"')
 
     @staticmethod
-    def get_enable_proxy(last_record: Union[str, bool], valid_format: str = 'y|n') -> dict:
+    def get_enable_proxy(
+        last_record: Union[str, bool], valid_format: str = "y|n"
+    ) -> dict:
         if last_record:
-            ep_notice: str = 'y' if last_record else 'n'
+            ep_notice: str = "y" if last_record else "n"
         else:
             ep_notice: str = GetStdioParams.UNDEFINED
-        default_prompt: str = '(默认n)' if ep_notice == GetStdioParams.UNDEFINED else ''
+        default_prompt: str = "(默认n)" if ep_notice == GetStdioParams.UNDEFINED else ""
         while True:  # 询问是否开启代理。
-            enable_proxy = console.input(
-                f'是否需要使用「代理」。上一次的记录是:「{ep_notice}」'
-                f'格式 - 「{valid_format}」{default_prompt}:').strip().lower()
-            if enable_proxy == '' and last_record is not None:
+            enable_proxy = (
+                console.input(
+                    f"是否需要使用「代理」。上一次的记录是:「{ep_notice}」"
+                    f"格式 - 「{valid_format}」{default_prompt}:"
+                )
+                .strip()
+                .lower()
+            )
+            if enable_proxy == "" and last_record is not None:
                 if last_record is True:
-                    enable_proxy = 'y'
+                    enable_proxy = "y"
                 elif last_record is False:
-                    enable_proxy = 'n'
-            elif enable_proxy == '':
-                enable_proxy = 'n'
+                    enable_proxy = "n"
+            elif enable_proxy == "":
+                enable_proxy = "n"
             if Validator.is_valid_enable_proxy(enable_proxy):
-                if enable_proxy == 'y':
-                    console.print(f'已设置「enable_proxy」为:「{enable_proxy}」',
-                                  style=ProcessConfig.stdio_style('enable_proxy'))
-                    return {'enable_proxy': True, 'record_flag': True}
-                elif enable_proxy == 'n':
-                    console.print(f'已设置「enable_proxy」为:「{enable_proxy}」',
-                                  style=ProcessConfig.stdio_style('enable_proxy'))
-                    return {'enable_proxy': False, 'record_flag': True}
+                if enable_proxy == "y":
+                    console.print(
+                        f"已设置「enable_proxy」为:「{enable_proxy}」",
+                        style=ProcessConfig.stdio_style("enable_proxy"),
+                    )
+                    return {"enable_proxy": True, "record_flag": True}
+                elif enable_proxy == "n":
+                    console.print(
+                        f"已设置「enable_proxy」为:「{enable_proxy}」",
+                        style=ProcessConfig.stdio_style("enable_proxy"),
+                    )
+                    return {"enable_proxy": False, "record_flag": True}
             else:
-                log.error(f'意外的参数:"{enable_proxy}",请输入有效参数!支持的参数 - 「{valid_format}」!')
+                log.error(
+                    f'意外的参数:"{enable_proxy}",请输入有效参数!支持的参数 - 「{valid_format}」!'
+                )
 
     @staticmethod
     def get_scheme(last_record: str, valid_format: list) -> dict:
         if valid_format is None:
-            valid_format: list = ['http', 'socks4', 'socks5']
-        fmt_valid_format = '|'.join(valid_format)
+            valid_format: list = ["http", "socks4", "socks5"]
+        fmt_valid_format = "|".join(valid_format)
         while True:  # v1.3.0 修复代理配置scheme参数配置抛出AttributeError。
-            scheme = console.input(
-                f'请输入「代理类型」。上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」'
-                f'格式 - 「{fmt_valid_format}」:').strip().lower()
-            if scheme == '' and last_record is not None:
+            scheme = (
+                console.input(
+                    f"请输入「代理类型」。上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」"
+                    f"格式 - 「{fmt_valid_format}」:"
+                )
+                .strip()
+                .lower()
+            )
+            if scheme == "" and last_record is not None:
                 scheme = last_record
             if Validator.is_valid_scheme(scheme, valid_format):
-                console.print(f'已设置「scheme」为:「{scheme}」', style=ProcessConfig.stdio_style('scheme'))
-                return {
-                    'scheme': scheme,
-                    'record_flag': True
-                }
+                console.print(
+                    f"已设置「scheme」为:「{scheme}」",
+                    style=ProcessConfig.stdio_style("scheme"),
+                )
+                return {"scheme": scheme, "record_flag": True}
             else:
                 log.warning(
-                    f'意外的参数:"{scheme}",请输入有效的代理类型!支持的参数 - 「{fmt_valid_format}」!')
+                    f'意外的参数:"{scheme}",请输入有效的代理类型!支持的参数 - 「{fmt_valid_format}」!'
+                )
 
     @staticmethod
-    def get_hostname(proxy_config: dict, last_record: str, valid_format: str = 'x.x.x.x'):
+    def get_hostname(
+        proxy_config: dict, last_record: str, valid_format: str = "x.x.x.x"
+    ):
         hostname = None
         while True:
             scheme, _, __ = ProcessConfig.get_proxy_info(proxy_config).values()
@@ -971,204 +1104,229 @@ class GetStdioParams:
             try:
                 hostname = console.input(
                     f'请输入代理类型为:"{scheme}"的「ip地址」。上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」'
-                    f'格式 - 「{valid_format}」:').strip()
-                if hostname == '' and last_record is not None:
+                    f"格式 - 「{valid_format}」:"
+                ).strip()
+                if hostname == "" and last_record is not None:
                     hostname = last_record
                 if Validator.is_valid_hostname(hostname):
-                    console.print(f'已设置「hostname」为:「{hostname}」', style=ProcessConfig.stdio_style('hostname'))
-                    return {
-                        'hostname': hostname,
-                        'record_flag': True
-                    }
+                    console.print(
+                        f"已设置「hostname」为:「{hostname}」",
+                        style=ProcessConfig.stdio_style("hostname"),
+                    )
+                    return {"hostname": hostname, "record_flag": True}
             except ValueError:
                 log.warning(
-                    f'"{hostname}"不是一个「ip地址」,请输入有效的ipv4地址!支持的参数 - 「{valid_format}」!')
+                    f'"{hostname}"不是一个「ip地址」,请输入有效的ipv4地址!支持的参数 - 「{valid_format}」!'
+                )
 
     @staticmethod
-    def get_port(proxy_config: dict, last_record: str, valid_format: str = '0~65535'):
+    def get_port(proxy_config: dict, last_record: str, valid_format: str = "0~65535"):
         port = None
         # 输入代理端口。
         while True:
             try:  # hostname,scheme可能出现None。
-                scheme, hostname, __ = ProcessConfig.get_proxy_info(proxy_config).values()
+                scheme, hostname, __ = ProcessConfig.get_proxy_info(
+                    proxy_config
+                ).values()
                 port = console.input(
                     f'请输入ip地址为:"{hostname}",代理类型为:"{scheme}"的「代理端口」。'
-                    f'上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」'
-                    f'格式 - 「{valid_format}」:').strip()
-                if port == '' and last_record is not None:
+                    f"上一次的记录是:「{last_record if last_record else GetStdioParams.UNDEFINED}」"
+                    f"格式 - 「{valid_format}」:"
+                ).strip()
+                if port == "" and last_record is not None:
                     port = last_record
                 if Validator.is_valid_port(port):
-                    console.print(f'已设置「port」为:「{port}」', style=ProcessConfig.stdio_style('port'))
-                    return {
-                        'port': int(port),
-                        'record_flag': True
-                    }
+                    console.print(
+                        f"已设置「port」为:「{port}」",
+                        style=ProcessConfig.stdio_style("port"),
+                    )
+                    return {"port": int(port), "record_flag": True}
                 else:
-                    log.warning(f'意外的参数:"{port}",端口号必须在「{valid_format}」之间!')
+                    log.warning(
+                        f'意外的参数:"{port}",端口号必须在「{valid_format}」之间!'
+                    )
             except ValueError:
-                log.warning(f'意外的参数:"{port}",请输入一个有效的整数!支持的参数 - 「{valid_format}」')
+                log.warning(
+                    f'意外的参数:"{port}",请输入一个有效的整数!支持的参数 - 「{valid_format}」'
+                )
             except Exception as e:
                 log.error(f'意外的错误,{_t(KeyWord.REASON)}:"{e}"')
 
     @staticmethod
     def get_proxy_authentication():
         # 是否需要认证。
-        style = ProcessConfig.stdio_style('proxy_authentication')
-        valid_format: str = 'y|n'
+        style = ProcessConfig.stdio_style("proxy_authentication")
+        valid_format: str = "y|n"
         while True:
-            is_proxy = console.input(f'代理是否需要「认证」? - 「{valid_format}」(默认n):').strip().lower()
-            if is_proxy == 'y':
-                username = console.input('请输入「账号」:').strip()
-                password = console.input('请输入「密码」:').strip()
-                console.print(f'已设置为:「代理需要认证」', style=style)
-                return {'username': username, 'password': password, 'record_flag': True}
-            elif is_proxy in ('n', ''):
-                console.print(f'已设置为:「代理不需要认证」', style=style)
-                return {'username': None, 'password': None, 'record_flag': True}
+            is_proxy = (
+                console.input(f"代理是否需要「认证」? - 「{valid_format}」(默认n):")
+                .strip()
+                .lower()
+            )
+            if is_proxy == "y":
+                username = console.input("请输入「账号」:").strip()
+                password = console.input("请输入「密码」:").strip()
+                console.print(f"已设置为:「代理需要认证」", style=style)
+                return {"username": username, "password": password, "record_flag": True}
+            elif is_proxy in ("n", ""):
+                console.print(f"已设置为:「代理不需要认证」", style=style)
+                return {"username": None, "password": None, "record_flag": True}
             else:
                 log.warning(f'意外的参数:"{is_proxy}",支持的参数 - 「{valid_format}」!')
 
 
 class BotCommandText:
-    HELP: tuple = ('help', '展示可用命令。')
+    HELP: tuple = ("help", "展示可用命令。")
     DOWNLOAD: tuple = (
-        'download', '分配新的下载任务(多种使用方式见使用说明)。\n`/download https://t.me/x/x 起始ID 结束ID [标签]` 或 `/download 链接1 链接2 [标签]`')
-    TABLE: tuple = ('table', '在终端输出当前下载情况的统计信息。')
-    FORWARD: tuple = ('forward', '从频道A转发至频道B 起始ID 结束ID。\n`/forward https://t.me/A https://t.me/B 1 100`')
-    EXIT: tuple = ('exit', '退出软件。')
-    LISTEN_DOWNLOAD: tuple = ('listen_download',
-                              '实时监听该链接的最新消息(视频和图片)进行下载。\n`/listen_download 链接1 链接2 [标签]`')
+        "download",
+        "分配新的下载任务(多种使用方式见使用说明)。\n`/download https://t.me/x/x 起始ID 结束ID [标签]` 或 `/download 链接1 链接2 [标签]`",
+    )
+    TABLE: tuple = ("table", "在终端输出当前下载情况的统计信息。")
+    FORWARD: tuple = (
+        "forward",
+        "从频道A转发至频道B 起始ID 结束ID。\n`/forward https://t.me/A https://t.me/B 1 100`",
+    )
+    EXIT: tuple = ("exit", "退出软件。")
+    LISTEN_DOWNLOAD: tuple = (
+        "listen_download",
+        "实时监听该链接的最新消息(视频和图片)进行下载。\n`/listen_download 链接1 链接2 [标签]`",
+    )
     LISTEN_FORWARD: tuple = (
-        'listen_forward', '实时监听该链接的最新消息(任意消息)进行转发。\n`/listen_forward 监听频道 转发频道`')
-    LISTEN_INFO: tuple = ('listen_info', '查看当前已经创建的监听信息。')
-    UPLOAD: tuple = ('upload', '上传本地的文件到指定频道。`/upload 本地文件 目标频道`')
-    DOWNLOAD_CHAT: tuple = ('download_chat', '下载指定频道并支持通过内联键盘自定义内容过滤。`/download_chat 频道链接`')
+        "listen_forward",
+        "实时监听该链接的最新消息(任意消息)进行转发。\n`/listen_forward 监听频道 转发频道`",
+    )
+    LISTEN_INFO: tuple = ("listen_info", "查看当前已经创建的监听信息。")
+    UPLOAD: tuple = ("upload", "上传本地的文件到指定频道。`/upload 本地文件 目标频道`")
+    DOWNLOAD_CHAT: tuple = (
+        "download_chat",
+        "下载指定频道并支持通过内联键盘自定义内容过滤。`/download_chat 频道链接`",
+    )
 
     @staticmethod
     def with_description(text: tuple) -> str:
-        return f'/{text[0]} - {text[1]}'
+        return f"/{text[0]} - {text[1]}"
 
 
 class BotCallbackText:
-    NULL: str = 'null'
-    PAY: str = 'pay'
-    LINK_TABLE: str = 'link_table'
-    COUNT_TABLE: str = 'count_table'
-    BACK_HELP: str = 'back_help'
-    BACK_TABLE: str = 'back_table'
-    NOTICE: str = 'notice'
-    DOWNLOAD: str = 'download'
-    DOWNLOAD_UPLOAD: str = 'download_upload'
-    REMOVE_LISTEN_DOWNLOAD: str = 'rld'
-    REMOVE_LISTEN_FORWARD: str = 'rlf'
-    LOOKUP_LISTEN_INFO: str = 'lookup_listen_info'
-    EXPORT_LINK_TABLE: str = 'export_link_table'
-    EXPORT_COUNT_TABLE: str = 'export_count_table'
-    TOGGLE_LINK_TABLE: str = 'toggle_link_table'
-    TOGGLE_COUNT_TABLE: str = 'toggle_count_table'
-    TOGGLE_FORWARD_VIDEO: str = 'toggle_forward_video'
-    TOGGLE_FORWARD_PHOTO: str = 'toggle_forward_photo'
-    TOGGLE_FORWARD_AUDIO: str = 'toggle_forward_audio'
-    TOGGLE_FORWARD_VOICE: str = 'toggle_forward_voice'
-    TOGGLE_FORWARD_ANIMATION: str = 'toggle_forward_animation'
-    TOGGLE_FORWARD_DOCUMENT: str = 'toggle_forward_document'
-    TOGGLE_FORWARD_TEXT: str = 'toggle_forward_text'
-    TOGGLE_DOWNLOAD_VIDEO: str = 'toggle_download_video'
-    TOGGLE_DOWNLOAD_PHOTO: str = 'toggle_download_photo'
-    TOGGLE_DOWNLOAD_AUDIO: str = 'toggle_download_audio'
-    TOGGLE_DOWNLOAD_VOICE: str = 'toggle_download_voice'
-    TOGGLE_DOWNLOAD_ANIMATION: str = 'toggle_download_animation'
-    TOGGLE_DOWNLOAD_DOCUMENT: str = 'toggle_download_document'
-    EXPORT_TABLE: str = 'export_table'
-    SHUTDOWN: str = 'shutdown'
-    SETTING: str = 'setting'
-    UPLOAD_SETTING: str = 'upload_setting'
-    DOWNLOAD_SETTING: str = 'download_setting'
-    FORWARD_SETTING: str = 'forward_setting'
-    UPLOAD_DOWNLOAD: str = 'upload_download'
-    UPLOAD_DOWNLOAD_DELETE: str = 'upload_download_delete'
-    DOWNLOAD_CHAT_ID: str = 'download_chat_id'
-    DOWNLOAD_CHAT_ID_CANCEL: str = 'download_chat_id_cancel'
-    DOWNLOAD_CHAT_FILTER: str = 'download_chat_filter'
-    DOWNLOAD_CHAT_DATE_FILTER: str = 'download_chat_date_filter'
-    DOWNLOAD_CHAT_DTYPE_FILTER: str = 'download_chat_dtype_filter'
-    TOGGLE_DOWNLOAD_CHAT_DTYPE_VIDEO: str = 'toggle_download_chat_video'
-    TOGGLE_DOWNLOAD_CHAT_DTYPE_PHOTO: str = 'toggle_download_chat_photo'
-    TOGGLE_DOWNLOAD_CHAT_DTYPE_AUDIO: str = 'toggle_download_chat_audio'
-    TOGGLE_DOWNLOAD_CHAT_DTYPE_VOICE: str = 'toggle_download_chat_voice'
-    TOGGLE_DOWNLOAD_CHAT_DTYPE_ANIMATION: str = 'toggle_download_chat_animation'
-    TOGGLE_DOWNLOAD_CHAT_DTYPE_DOCUMENT: str = 'toggle_download_chat_document'
-    CALENDAR_CONFIRM: str = 'calendar_confirm'
-    FILTER_START_DATE: str = 'filter_start_date'
-    FILTER_END_DATE: str = 'filter_end_date'
+    NULL: str = "null"
+    PAY: str = "pay"
+    LINK_TABLE: str = "link_table"
+    COUNT_TABLE: str = "count_table"
+    BACK_HELP: str = "back_help"
+    BACK_TABLE: str = "back_table"
+    NOTICE: str = "notice"
+    DOWNLOAD: str = "download"
+    DOWNLOAD_UPLOAD: str = "download_upload"
+    REMOVE_LISTEN_DOWNLOAD: str = "rld"
+    REMOVE_LISTEN_FORWARD: str = "rlf"
+    LOOKUP_LISTEN_INFO: str = "lookup_listen_info"
+    EXPORT_LINK_TABLE: str = "export_link_table"
+    EXPORT_COUNT_TABLE: str = "export_count_table"
+    TOGGLE_LINK_TABLE: str = "toggle_link_table"
+    TOGGLE_COUNT_TABLE: str = "toggle_count_table"
+    TOGGLE_FORWARD_VIDEO: str = "toggle_forward_video"
+    TOGGLE_FORWARD_PHOTO: str = "toggle_forward_photo"
+    TOGGLE_FORWARD_AUDIO: str = "toggle_forward_audio"
+    TOGGLE_FORWARD_VOICE: str = "toggle_forward_voice"
+    TOGGLE_FORWARD_ANIMATION: str = "toggle_forward_animation"
+    TOGGLE_FORWARD_DOCUMENT: str = "toggle_forward_document"
+    TOGGLE_FORWARD_TEXT: str = "toggle_forward_text"
+    TOGGLE_DOWNLOAD_VIDEO: str = "toggle_download_video"
+    TOGGLE_DOWNLOAD_PHOTO: str = "toggle_download_photo"
+    TOGGLE_DOWNLOAD_AUDIO: str = "toggle_download_audio"
+    TOGGLE_DOWNLOAD_VOICE: str = "toggle_download_voice"
+    TOGGLE_DOWNLOAD_ANIMATION: str = "toggle_download_animation"
+    TOGGLE_DOWNLOAD_DOCUMENT: str = "toggle_download_document"
+    EXPORT_TABLE: str = "export_table"
+    SHUTDOWN: str = "shutdown"
+    SETTING: str = "setting"
+    UPLOAD_SETTING: str = "upload_setting"
+    DOWNLOAD_SETTING: str = "download_setting"
+    FORWARD_SETTING: str = "forward_setting"
+    UPLOAD_DOWNLOAD: str = "upload_download"
+    UPLOAD_DOWNLOAD_DELETE: str = "upload_download_delete"
+    DOWNLOAD_CHAT_ID: str = "download_chat_id"
+    DOWNLOAD_CHAT_ID_CANCEL: str = "download_chat_id_cancel"
+    DOWNLOAD_CHAT_FILTER: str = "download_chat_filter"
+    DOWNLOAD_CHAT_DATE_FILTER: str = "download_chat_date_filter"
+    DOWNLOAD_CHAT_DTYPE_FILTER: str = "download_chat_dtype_filter"
+    TOGGLE_DOWNLOAD_CHAT_DTYPE_VIDEO: str = "toggle_download_chat_video"
+    TOGGLE_DOWNLOAD_CHAT_DTYPE_PHOTO: str = "toggle_download_chat_photo"
+    TOGGLE_DOWNLOAD_CHAT_DTYPE_AUDIO: str = "toggle_download_chat_audio"
+    TOGGLE_DOWNLOAD_CHAT_DTYPE_VOICE: str = "toggle_download_chat_voice"
+    TOGGLE_DOWNLOAD_CHAT_DTYPE_ANIMATION: str = "toggle_download_chat_animation"
+    TOGGLE_DOWNLOAD_CHAT_DTYPE_DOCUMENT: str = "toggle_download_chat_document"
+    CALENDAR_CONFIRM: str = "calendar_confirm"
+    FILTER_START_DATE: str = "filter_start_date"
+    FILTER_END_DATE: str = "filter_end_date"
 
     def __iter__(self):
         for key, value in vars(self.__class__).items():
-            if not key.startswith('__') and not callable(value):  # 排除特殊方法和属性。
+            if not key.startswith("__") and not callable(value):  # 排除特殊方法和属性。
                 yield value
 
 
 class BotMessage:
-    RIGHT: str = '✅以下链接已创建下载任务:\n'
-    EXIST: str = '⚠️以下链接已存在已被移除:\n'
-    INVALID: str = '🚫以下链接不合法已被移除:\n'
+    RIGHT: str = "✅以下链接已创建下载任务:\n"
+    EXIST: str = "⚠️以下链接已在当前任务或历史记录中存在,本次未重复创建下载任务:\n"
+    INVALID: str = "🚫以下链接不合法已被移除:\n"
 
 
 class BotButton:
-    GITHUB: str = '📦GitHub'
-    SUBSCRIBE_CHANNEL: str = '📌订阅频道'
-    VIDEO_TUTORIAL: str = '🎬视频教程'
-    PAY: str = '💰支持作者'
-    OPEN_NOTICE: str = '📢启用通知'
-    CLOSE_NOTICE: str = '🔕禁用通知'
-    LINK_TABLE: str = '🔗链接统计表'
-    COUNT_TABLE: str = '➕计数统计表'
-    HELP_PAGE: str = '🛎️帮助页面'
-    CLICK_VIEW: str = '🖱点击查看'
-    CLICK_DOWNLOAD: str = '🖱点击下载'
-    DOWNLOAD: str = '⬇️下载'
-    DOWNLOAD_UPLOAD: str = '↕️下载后上传'
-    TASK_ASSIGN: str = '✅任务已分配'
-    TASK_CANCEL: str = '🗑️任务已取消'
-    EXECUTE_TASK: str = '▶️执行任务'
-    CANCEL_TASK: str = '⏹️取消任务'
-    OK: str = '✅确定'
-    CANCEL: str = '❌取消'
-    RETURN: str = '🔙返回'
-    CONFIRM_AND_RETURN: str = '↩️确定并返回'
-    LOOKUP_LISTEN_INFO: str = '🔍查看监听信息'
-    EXPORT_TABLE: str = '📊导出表格'
-    RESELECT: str = '🔄重新选择'
-    SETTING: str = '⚙️设置'
-    OPEN_LINK_TABLE: str = '🔓启用导出链接表格'
-    CLOSE_LINK_TABLE: str = '🔒禁用导出链接表格'
-    OPEN_COUNT_TABLE: str = '🔓启用导出计数表格'
-    CLOSE_COUNT_TABLE: str = '🔒禁用导出计数表格'
-    OPEN_EXIT_SHUTDOWN: str = '✅启用退出后关机'
-    CLOSE_EXIT_SHUTDOWN: str = '❌禁用退出后关机'
-    ALREADY_REMOVE: str = '✅已移除'
-    UPLOAD_SETTING: str = '📤上传设置'
-    DOWNLOAD_SETTING: str = '📥下载设置'
-    FORWARD_SETTING: str = '↗️转发设置'
-    OPEN_UPLOAD_DOWNLOAD: str = '🔓启用下载后上传'
-    CLOSE_UPLOAD_DOWNLOAD: str = '🔒禁用下载后上传'
-    OPEN_UPLOAD_DOWNLOAD_DELETE: str = '🔓启用下载后上传并删除'
-    CLOSE_UPLOAD_DOWNLOAD_DELETE: str = '🔒禁用下载后上传并删除'
-    VIDEO_ON: str = '🎬视频 ✅'
-    PHOTO_ON: str = '🖼️图片 ✅'
-    AUDIO_ON: str = '🎵音频 ✅'
-    VOICE_ON: str = '🎤语音 ✅'
-    ANIMATION_ON: str = '🎨GIF ✅'
-    DOCUMENT_ON: str = '📄文档 ✅'
-    TEXT_ON: str = '💬文本消息 ✅'
-    VIDEO_OFF: str = '🎬视频 ❌'
-    PHOTO_OFF: str = '🖼️图片 ❌'
-    AUDIO_OFF: str = '🎵音频 ❌'
-    VOICE_OFF: str = '🎤语音 ❌'
-    ANIMATION_OFF: str = '🎨GIF ❌'
-    DOCUMENT_OFF: str = '📄文档 ❌'
-    TEXT_OFF: str = '💬文本消息 ❌'
-    DATE_RANGE_SETTING: str = '📅设置日期范围'
-    SELECT_START_DATE: str = '⏮️选择起始日期'
-    SELECT_END_DATE: str = '⏭️选择结束日期'
-    DOWNLOAD_DTYPE_SETTING: str = '📝下载类型设置'
+    GITHUB: str = "📦GitHub"
+    SUBSCRIBE_CHANNEL: str = "📌订阅频道"
+    VIDEO_TUTORIAL: str = "🎬视频教程"
+    PAY: str = "💰支持作者"
+    OPEN_NOTICE: str = "📢启用通知"
+    CLOSE_NOTICE: str = "🔕禁用通知"
+    LINK_TABLE: str = "🔗链接统计表"
+    COUNT_TABLE: str = "➕计数统计表"
+    HELP_PAGE: str = "🛎️帮助页面"
+    CLICK_VIEW: str = "🖱点击查看"
+    CLICK_DOWNLOAD: str = "🖱点击下载"
+    DOWNLOAD: str = "⬇️下载"
+    DOWNLOAD_UPLOAD: str = "↕️下载后上传"
+    TASK_ASSIGN: str = "✅任务已分配"
+    TASK_CANCEL: str = "🗑️任务已取消"
+    EXECUTE_TASK: str = "▶️执行任务"
+    CANCEL_TASK: str = "⏹️取消任务"
+    OK: str = "✅确定"
+    CANCEL: str = "❌取消"
+    RETURN: str = "🔙返回"
+    CONFIRM_AND_RETURN: str = "↩️确定并返回"
+    LOOKUP_LISTEN_INFO: str = "🔍查看监听信息"
+    EXPORT_TABLE: str = "📊导出表格"
+    RESELECT: str = "🔄重新选择"
+    SETTING: str = "⚙️设置"
+    OPEN_LINK_TABLE: str = "🔓启用导出链接表格"
+    CLOSE_LINK_TABLE: str = "🔒禁用导出链接表格"
+    OPEN_COUNT_TABLE: str = "🔓启用导出计数表格"
+    CLOSE_COUNT_TABLE: str = "🔒禁用导出计数表格"
+    OPEN_EXIT_SHUTDOWN: str = "✅启用退出后关机"
+    CLOSE_EXIT_SHUTDOWN: str = "❌禁用退出后关机"
+    ALREADY_REMOVE: str = "✅已移除"
+    UPLOAD_SETTING: str = "📤上传设置"
+    DOWNLOAD_SETTING: str = "📥下载设置"
+    FORWARD_SETTING: str = "↗️转发设置"
+    OPEN_UPLOAD_DOWNLOAD: str = "🔓启用下载后上传"
+    CLOSE_UPLOAD_DOWNLOAD: str = "🔒禁用下载后上传"
+    OPEN_UPLOAD_DOWNLOAD_DELETE: str = "🔓启用下载后上传并删除"
+    CLOSE_UPLOAD_DOWNLOAD_DELETE: str = "🔒禁用下载后上传并删除"
+    VIDEO_ON: str = "🎬视频 ✅"
+    PHOTO_ON: str = "🖼️图片 ✅"
+    AUDIO_ON: str = "🎵音频 ✅"
+    VOICE_ON: str = "🎤语音 ✅"
+    ANIMATION_ON: str = "🎨GIF ✅"
+    DOCUMENT_ON: str = "📄文档 ✅"
+    TEXT_ON: str = "💬文本消息 ✅"
+    VIDEO_OFF: str = "🎬视频 ❌"
+    PHOTO_OFF: str = "🖼️图片 ❌"
+    AUDIO_OFF: str = "🎵音频 ❌"
+    VOICE_OFF: str = "🎤语音 ❌"
+    ANIMATION_OFF: str = "🎨GIF ❌"
+    DOCUMENT_OFF: str = "📄文档 ❌"
+    TEXT_OFF: str = "💬文本消息 ❌"
+    DATE_RANGE_SETTING: str = "📅设置日期范围"
+    SELECT_START_DATE: str = "⏮️选择起始日期"
+    SELECT_END_DATE: str = "⏭️选择结束日期"
+    DOWNLOAD_DTYPE_SETTING: str = "📝下载类型设置"

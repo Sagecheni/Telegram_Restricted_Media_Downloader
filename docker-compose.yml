@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   trmd:
     build: .
@@ -24,5 +22,7 @@ services:
       - /mnt/user/Sage-NAS/Downloads/Telegram:/data
       # Links file directory (e.g., ./links/links.txt)
       - /mnt/cache/appdata/trmd/links:/links
-    command: ["python", "main.py"]
-
+      # Optional: cookies.txt for yt-dlp (exported from browser and mounted into container)
+      # Replace /path/on/host/cookies.txt with your real cookies.txt path and uncomment:
+      - /mnt/cache/appdata/trmd/cookies:/cookies
+    command: [ "python", "main.py" ]

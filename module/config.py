@@ -138,6 +138,11 @@ class UserConfig(BaseConfig):
         'api_id': None,
         'api_hash': None,
         'bot_token': None,
+        'converter': {
+            'enabled': False,
+            'bot_username': None,
+            'timeout': 180
+        },
         'proxy': {
             'enable_proxy': None,
             'scheme': None,
@@ -186,6 +191,7 @@ class UserConfig(BaseConfig):
         self.api_hash = self.config.get('api_hash')
         self.api_id = self.config.get('api_id')
         self.bot_token = self.config.get('bot_token')
+        self.converter: dict = self.config.get('converter', {})
         self.download_type: list = self.config.get('download_type')
         self.is_shutdown: bool = self.config.get('is_shutdown')
         self.links: str = self.config.get('links')
@@ -292,6 +298,8 @@ class UserConfig(BaseConfig):
             history=history
         )
 
+        # 新增的嵌套配置: converter
+        self.process_nesting(param_name='converter', config=config)
         self.process_nesting(param_name='proxy', config=config)
         self.process_nesting(param_name='max_tasks', config=config)
         self.process_nesting(param_name='max_retries', config=config)

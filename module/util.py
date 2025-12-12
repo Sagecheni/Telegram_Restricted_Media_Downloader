@@ -9,20 +9,13 @@ import re
 from typing import Tuple, List, Union
 
 import pyrogram
-from pyrogram.errors.exceptions.bad_request_400 import (
-    MsgIdInvalid,
-    UsernameNotOccupied
-)
+from pyrogram.errors.exceptions.bad_request_400 import MsgIdInvalid, UsernameNotOccupied
 from pyrogram.types.messages_and_media import ReplyParameters
 from urllib.parse import parse_qs, urlparse
 from rich.text import Text
 
 from module import utils
-from module.enums import (
-    Link,
-    LinkType,
-    DownloadType
-)
+from module.enums import Link, LinkType, DownloadType
 
 
 def safe_index(lst: list, index: int, default=None):
@@ -46,10 +39,7 @@ def truncate_display_filename(file_name: str) -> Text:
     terminal_width: int = get_terminal_width()
     max_width: int = max(int(terminal_width * 0.3), 1)
     text = Text(file_name)
-    text.truncate(
-        max_width=max_width,
-        overflow='ellipsis'
-    )
+    text.truncate(max_width=max_width, overflow="ellipsis")
     return text
 
 
@@ -70,91 +60,162 @@ async def parse_link(client: pyrogram.Client, link: str) -> dict:
             chat = await client.get_chat(link.group_id)
             if chat:
                 return {
-                    'chat_id': chat.linked_chat.id,
-                    'comment_id': link.comment_id,
-                    'topic_id': link.topic_id
+                    "chat_id": chat.linked_chat.id,
+                    "comment_id": link.comment_id,
+                    "topic_id": link.topic_id,
                 }
 
         return {
-            'chat_id': link.group_id,
-            'comment_id': link.post_id,
-            'topic_id': link.topic_id
+            "chat_id": link.group_id,
+            "comment_id": link.post_id,
+            "topic_id": link.topic_id,
         }
     except Exception:
-        raise ValueError('Invalid message link.')
+        raise ValueError("Invalid message link.")
 
 
 def extract_info_from_link(link: str) -> Link:
     # https://github.com/tangyoha/telegram_media_downloader/blob/master/utils/format.py#L220
-    if link in ('me', 'self'):
+    if link in ("me", "self"):
         return Link(group_id=link)
 
     try:
         u = urlparse(link)
-        paths = [p for p in u.path.split('/') if p]
+        paths = [p for p in u.path.split("/") if p]
         query = parse_qs(u.query)
     except ValueError:
         return Link()
 
     result = Link()
 
-    if 'comment' in query:
+    if "comment" in query:
         result.group_id = paths[0]
-        result.comment_id = int(query['comment'][0])
-    elif len(paths) == 1 and paths[0] != 'c':
+        result.comment_id = int(query["comment"][0])
+    elif len(paths) == 1 and paths[0] != "c":
         result.group_id = paths[0]
     elif len(paths) == 2:
-        if paths[0] == 'c':
-            result.group_id = int(f'-100{paths[1]}')
+        if paths[0] == "c":
+            result.group_id = int(f"-100{paths[1]}")
         else:
             result.group_id = paths[0]
             result.post_id = int(paths[1])
     elif len(paths) == 3:
-        if paths[0] == 'c':
-            result.group_id = int(f'-100{paths[1]}')
+        if paths[0] == "c":
+            result.group_id = int(f"-100{paths[1]}")
             result.post_id = int(paths[2])
         else:
             result.group_id = paths[0]
             result.topic_id = int(paths[1])
             result.post_id = int(paths[2])
-    elif len(paths) == 4 and paths[0] == 'c':
-        result.group_id = int(f'-100{paths[1]}')
+    elif len(paths) == 4 and paths[0] == "c":
+        result.group_id = int(f"-100{paths[1]}")
         result.topic_id = int(paths[2])
         result.post_id = int(paths[3])
 
     return result
 
 
+def canonical_link_str(link: str) -> str:
+    """将任意 t.me 链接标准化为稳定键值，用于去重与持久化。
+
+    规则：
+    - 统一生成 t.me/c/<abs_id>/<post_id> 或 t.me/<username>/<post_id>
+      若含话题，追加 /<topic_id>/<post_id>
+    - 保留是否为 single 与 comment 的语义，使用后缀标识：::single 与 ::comment
+      注意：这两个后缀用于区分同一消息的不同子任务，避免误判“已完成”。
+    - 无法解析则返回原始字符串。
+    """
+    try:
+        u = urlparse(link)
+        info = extract_info_from_link(link)
+        gid = info.group_id
+        pid = info.post_id
+        tid = info.topic_id
+
+        if not gid or not pid:
+            return link
+
+        if isinstance(gid, int):
+            # 私密频道 -100xxxxxxxxxx -> c/xxxxxxxxxx
+            gid_str = str(gid)
+            if gid_str.startswith("-100"):
+                base = f"https://t.me/c/{gid_str[4:]}"
+            else:
+                # 群聊/特殊情况，统一成 chat:<id>
+                base = f"chat:{gid}"
+        else:
+            # 公开频道/用户名
+            base = f"https://t.me/{gid}"
+
+        if tid is not None:
+            base = f"{base}/{tid}/{pid}"
+        else:
+            base = f"{base}/{pid}"
+
+        # 标记 single/comment 语义
+        flags = []
+        q = parse_qs(u.query)
+        if ("comment" in q) or ("comment" in (u.query or "")):
+            flags.append("comment")
+        if ("single" in q) or ("single" in (u.query or "")):
+            flags.append("single")
+
+        if flags:
+            base = base + "::" + "::".join(flags)
+        return base
+    except Exception:
+        return link
+
+
+def canonical_link_message(message: pyrogram.types.Message) -> str:
+    """将 Message 标准化为稳定键值（不含 single/comment 标志）。"""
+    try:
+        # 优先用内置 link 进一步归一化
+        if getattr(message, "link", None):
+            return canonical_link_str(message.link)
+        cid = getattr(getattr(message, "chat", None), "id", None)
+        mid = getattr(message, "id", None)
+        if isinstance(cid, int) and isinstance(mid, int):
+            cid_str = str(cid)
+            if cid_str.startswith("-100"):
+                return f"https://t.me/c/{cid_str[4:]}/{mid}"
+            return f"chat:{cid}/msg:{mid}"
+        return f"message:{id(message)}"
+    except Exception:
+        return f"msg:{getattr(message, 'id', 'unknown')}"
+
+
 async def get_message_by_link(
-        client: pyrogram.Client,
-        link: str,
-        single_link: bool = False  # 为True时,将每个链接都视作是单文件。
+    client: pyrogram.Client,
+    link: str,
+    single_link: bool = False,  # 为True时,将每个链接都视作是单文件。
 ) -> Union[dict, None]:
     origin_link: str = link
     record_type: set = set()
-    link: str = link[:-1] if link.endswith('/') else link
-    if '?single&comment' in link:  # v1.1.0修复讨论组中附带?single时不下载的问题。
+    link: str = link[:-1] if link.endswith("/") else link
+    if "?single&comment" in link:  # v1.1.0修复讨论组中附带?single时不下载的问题。
         record_type.add(LinkType.COMMENT)
         single_link = True
-    if '?single' in link:
-        link: str = link.split('?single')[0]
+    if "?single" in link:
+        link: str = link.split("?single")[0]
         single_link = True
-    if '?comment' in link:  # 链接中包含?comment表示用户需要同时下载评论中的媒体。
-        link = link.split('?comment')[0]
+    if "?comment" in link:  # 链接中包含?comment表示用户需要同时下载评论中的媒体。
+        link = link.split("?comment")[0]
         record_type.add(LinkType.COMMENT)
-    if link.count('/') >= 5 or 't.me/c/' in link:
-        if link.startswith('https://t.me/c/'):
-            count: int = link.split('https://t.me/c/')[1].count('/')
+    if link.count("/") >= 5 or "t.me/c/" in link:
+        if link.startswith("https://t.me/c/"):
+            count: int = link.split("https://t.me/c/")[1].count("/")
             record_type.add(LinkType.TOPIC) if count == 2 else None
-        elif link.startswith('https://t.me'):
+        elif link.startswith("https://t.me"):
             record_type.add(LinkType.TOPIC)
 
     # https://github.com/KurimuzonAkuma/pyrogram/blob/dev/pyrogram/methods/messages/get_messages.py#L101
     match = re.match(
-        r'^(?:https?://)?(?:www\.)?(?:t(?:elegram)?\.(?:org|me|dog)/(?:c/)?)([\w]+)(?:/\d+)*/(\d+)/?$',
-        link.lower())
+        r"^(?:https?://)?(?:www\.)?(?:t(?:elegram)?\.(?:org|me|dog)/(?:c/)?)([\w]+)(?:/\d+)*/(\d+)/?$",
+        link.lower(),
+    )
     if not match:
-        raise ValueError('Invalid message link.')
+        raise ValueError("Invalid message link.")
 
     try:
         chat_id = utils.get_channel_id(int(match.group(1)))
@@ -168,7 +229,7 @@ async def get_message_by_link(
             if not any(getattr(comment, dtype) for dtype in DownloadType()):
                 continue
             if single_link:  # 处理单链接情况。
-                if '=' in origin_link and int(origin_link.split('=')[-1]) != comment.id:
+                if "=" in origin_link and int(origin_link.split("=")[-1]) != comment.id:
                     continue
             comment_message.append(comment)
     message = await client.get_messages(chat_id=chat_id, message_ids=message_id)
@@ -185,32 +246,39 @@ async def get_message_by_link(
                 group_message.extend(comment_message)
         if comment_message:
             return {
-                'link_type': LinkType.TOPIC if LinkType.TOPIC in record_type else LinkType.COMMENT,
-                'chat_id': chat_id,
-                'message': group_message,
-                'member_num': len(group_message)
+                "link_type": LinkType.TOPIC
+                if LinkType.TOPIC in record_type
+                else LinkType.COMMENT,
+                "chat_id": chat_id,
+                "message": group_message,
+                "member_num": len(group_message),
             }
         else:
             return {
-                'link_type': LinkType.TOPIC if LinkType.TOPIC in record_type else LinkType.GROUP,
-                'chat_id': chat_id,
-                'message': group_message,
-                'member_num': len(group_message)
+                "link_type": LinkType.TOPIC
+                if LinkType.TOPIC in record_type
+                else LinkType.GROUP,
+                "chat_id": chat_id,
+                "message": group_message,
+                "member_num": len(group_message),
             }
     elif is_group is False and group_message is None:  # 单文件。
         return {
-            'link_type': LinkType.TOPIC if LinkType.TOPIC in record_type else LinkType.SINGLE,
-            'chat_id': chat_id,
-            'message': message,
-            'member_num': 1
+            "link_type": LinkType.TOPIC
+            if LinkType.TOPIC in record_type
+            else LinkType.SINGLE,
+            "chat_id": chat_id,
+            "message": message,
+            "member_num": 1,
         }
     elif is_group is None and group_message is None:
         raise MsgIdInvalid(
-            'The message does not exist, the channel has been disbanded or is not in the channel.')
+            "The message does not exist, the channel has been disbanded or is not in the channel."
+        )
     elif is_group is None and group_message == 0:
-        raise Exception('Link parsing error.')
+        raise Exception("Link parsing error.")
     else:
-        raise Exception('Unknown error.')
+        raise Exception("Unknown error.")
 
 
 async def __is_group(message) -> Tuple[Union[bool, None], Union[list, None]]:
@@ -223,12 +291,11 @@ async def __is_group(message) -> Tuple[Union[bool, None], Union[list, None]]:
 
 
 async def get_chat_with_notify(
-        user_client: pyrogram.Client,
-        chat_id: Union[int, str],
-        error_msg: Union[str] = None,
-        bot_client: Union[pyrogram.Client] = None,
-        bot_message: Union[pyrogram.types.Message] = None
-
+    user_client: pyrogram.Client,
+    chat_id: Union[int, str],
+    error_msg: Union[str] = None,
+    bot_client: Union[pyrogram.Client] = None,
+    bot_message: Union[pyrogram.types.Message] = None,
 ) -> Union[pyrogram.types.Chat, None]:
     try:
         chat = await user_client.get_chat(chat_id)
@@ -238,7 +305,7 @@ async def get_chat_with_notify(
             await bot_client.send_message(
                 chat_id=bot_message.from_user.id,
                 reply_parameters=ReplyParameters(message_id=bot_message.id),
-                text=error_msg if error_msg else ''
+                text=error_msg if error_msg else "",
             )
         return None
 
@@ -251,28 +318,36 @@ def is_allow_upload(file_size: int, is_premium: bool) -> bool:
 
 
 def format_chat_link(link: str, topic: bool = False) -> str:
-    parts: list = link.strip('/').split('/')
+    parts: list = link.strip("/").split("/")
     len_parts: int = len(parts)
     result: Union[str, None] = None
     if len_parts > 3 and topic is False:
         # 判断是否是/c/类型的频道链接(确保是独立的'c'部分)。
-        if parts[3] == 'c' and len_parts >= 5:  # 对于/c/类型。
+        if parts[3] == "c" and len_parts >= 5:  # 对于/c/类型。
             if len_parts >= 6:
                 # 6个部分时,保留前5个部分 (去掉最后一个)。
-                result = '/'.join(parts[:5])  # https://t.me/c/2530641322/1 -> https://t.me/c/2530641322
+                result = "/".join(
+                    parts[:5]
+                )  # https://t.me/c/2530641322/1 -> https://t.me/c/2530641322
 
         else:  # 对于普通类型。
             if len_parts >= 5:
                 # 5个部分时,保留前4个部分(去掉最后一个)。
-                result = '/'.join(parts[:4])  # https://t.me/coustomer/144 -> https://t.me/coustomer
+                result = "/".join(
+                    parts[:4]
+                )  # https://t.me/coustomer/144 -> https://t.me/coustomer
     else:  # 话题格式化。
-        if parts[3] == 'c' and len_parts >= 5:  # 对于/c/类型。
+        if parts[3] == "c" and len_parts >= 5:  # 对于/c/类型。
             if len_parts >= 7:
                 # 7个部分时,保留前6个部分(去掉最后一个)。
-                result = '/'.join(parts[:6])  # https://t.me/c/2495197831/100/200 -> https://t.me/c/2495197831/100
+                result = "/".join(
+                    parts[:6]
+                )  # https://t.me/c/2495197831/100/200 -> https://t.me/c/2495197831/100
         elif len_parts >= 6:
             # 6个部分时,保留前5个部分(去掉最后一个)。
-            result = '/'.join(parts[:5])  # https://t.me/coustomer/5/1 -> https://t.me/coustomer/5
+            result = "/".join(
+                parts[:5]
+            )  # https://t.me/coustomer/5/1 -> https://t.me/coustomer/5
 
     return result if result else link
 

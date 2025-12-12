@@ -5,9 +5,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     TZ=Asia/Shanghai
 
-# System deps for pymediainfo and timezone handling
+# System deps for pymediainfo, yt-dlp (ffmpeg) and timezone handling
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libmediainfo0v5 tzdata build-essential && \
+    apt-get install -y --no-install-recommends libmediainfo0v5 tzdata build-essential ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/trmd
@@ -23,8 +23,11 @@ RUN set -eux; \
 # Copy project files
 COPY . .
 
+# Install helper wrapper for yt-dlp that automatically uses mounted cookies.txt
+RUN install -m 755 res/yt-dlp-x.sh /usr/local/bin/x-yt-dlp
+
 # Declare common mount points
-VOLUME ["/opt/trmd/sessions", "/opt/trmd/temp", "/root/.config/TRMD", "/data", "/links"]
+VOLUME ["/opt/trmd/sessions", "/opt/trmd/temp", "/root/.config/TRMD", "/data", "/links", "/cookies"]
 
 # Default command: run the app (interactive prompts will appear on first run)
 CMD ["python", "main.py"]

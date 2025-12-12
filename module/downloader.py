@@ -7,10 +7,13 @@ import os
 import sys
 import asyncio
 import datetime
+import re
+import json
+import shutil
 
 from functools import partial
 from sqlite3 import OperationalError
-from typing import Union, Callable, Optional, Dict
+from typing import Union, Callable, Optional, Dict, Iterable, Tuple
 
 import pyrogram
 from pyrogram.enums.parse_mode import ParseMode
@@ -22,32 +25,24 @@ from pyrogram.errors.exceptions.bad_request_400 import (
     UsernameNotOccupied,
     PeerIdInvalid,
     ChannelPrivate as ChannelPrivate_400,
-    ChatForwardsRestricted as ChatForwardsRestricted_400
+    ChatForwardsRestricted as ChatForwardsRestricted_400,
 )
 from pyrogram.errors.exceptions.not_acceptable_406 import (
     ChannelPrivate as ChannelPrivate_406,
-    ChatForwardsRestricted as ChatForwardsRestricted_406
+    ChatForwardsRestricted as ChatForwardsRestricted_406,
 )
 from pyrogram.errors.exceptions.unauthorized_401 import (
     SessionRevoked,
     AuthKeyUnregistered,
     SessionExpired,
-    Unauthorized
+    Unauthorized,
 )
 from pyrogram.errors.exceptions.forbidden_403 import ChatWriteForbidden
 from pyrogram.handlers import MessageHandler
 from pyrogram.types.messages_and_media import ReplyParameters
-from pyrogram.types.bots_and_keyboards import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
-)
+from pyrogram.types.bots_and_keyboards import InlineKeyboardButton, InlineKeyboardMarkup
 
-from module import (
-    console,
-    log,
-    LINK_PREVIEW_OPTIONS,
-    SLEEP_THRESHOLD
-)
+from module import console, log, LINK_PREVIEW_OPTIONS, SLEEP_THRESHOLD
 from module.filter import Filter
 from module.app import Application
 from module.bot import Bot, KeyboardButton, CallbackData
@@ -60,7 +55,7 @@ from module.enums import (
     BotMessage,
     DownloadType,
     CalenderKeyboard,
-    SaveDirectoryPrefix
+    SaveDirectoryPrefix,
 )
 from module.language import _t
 from module.path_tool import (
@@ -70,7 +65,7 @@ from module.path_tool import (
     split_path,
     compare_file_size,
     move_to_save_directory,
-    safe_replace
+    safe_replace,
 )
 from module.task import DownloadTask
 from module.stdio import ProgressBar, Base64Image, MetaData
@@ -82,12 +77,13 @@ from module.util import (
     get_chat_with_notify,
     safe_message,
     truncate_display_filename,
-    Solution
+    Solution,
+    canonical_link_str,
+    canonical_link_message,
 )
 
 
 class TelegramRestrictedMediaDownloader(Bot):
-
     def __init__(self):
         super().__init__()
         self.loop = asyncio.get_event_loop()
@@ -104,30 +100,142 @@ class TelegramRestrictedMediaDownloader(Bot):
         self.link_tag_map: Dict[str, str] = {}
         self.message_tag_map: Dict[tuple, str] = {}
         self.listen_download_tag_by_chatid: Dict[Union[int, str], str] = {}
+        # 规范化后的进行中/已分配链接集合（仅用于去重判断）
+        self.bot_task_link_canon: set = set()
+        # gallery-dl 配置
+        base_dir = getattr(
+            self.app,
+            "DIRECTORY_NAME",
+            os.path.dirname(os.path.abspath(sys.argv[0])),
+        )
+        self.gallery_dl_base_dir: str = base_dir
+        self.gallery_dl_config_path: str = os.path.join(
+            self.gallery_dl_base_dir, "config", "gallery-dl", "config.json"
+        )
+        self.gallery_dl_config: Union[dict, None] = None
+        self._load_gallery_dl_config()
 
-    def env_save_directory(
-            self,
-            message: pyrogram.types.Message
-    ) -> str:
+    def _load_gallery_dl_config(self) -> None:
+        try:
+            if os.path.isfile(self.gallery_dl_config_path):
+                with open(self.gallery_dl_config_path, "r", encoding="UTF-8") as f:
+                    self.gallery_dl_config = json.load(f)
+                log.info(
+                    f'已加载 gallery-dl 配置文件:"{self.gallery_dl_config_path}"。'
+                )
+            else:
+                log.warning(
+                    f'未找到 gallery-dl 配置文件:"{self.gallery_dl_config_path}"。'
+                )
+        except Exception as e:
+            self.gallery_dl_config = None
+            log.error(f'加载 gallery-dl 配置文件失败,{_t(KeyWord.REASON)}:"{e}"')
+
+    async def _run_gallery_dl(
+        self,
+        url: str,
+        site: str,
+    ) -> bool:
+        """使用 gallery-dl 下载指定站点链接。
+
+        返回值:
+            True  - gallery-dl 认为下载成功(退出码为0)。
+            False - 运行失败或退出码非0。
+        """
+        # 优先尝试通过 PATH 中的 gallery-dl
+        executable = shutil.which("gallery-dl") or "gallery-dl"
+        cmd: list = [executable]
+
+        if self.gallery_dl_config_path and os.path.isfile(self.gallery_dl_config_path):
+            cmd.extend(["--config", self.gallery_dl_config_path])
+
+        cmd.append(url)
+        log.info(f'使用 gallery-dl 下载{site}链接:"{url}"，命令:{cmd}')
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.gallery_dl_base_dir,
+            )
+
+            async def _log_stream(stream, is_stderr: bool = False) -> None:
+                """实时读取并记录子进程输出。
+
+                说明:
+                - gallery-dl 的进度条通常通过带 \\r 的单行刷新输出;
+                  如果仅按 readline() 等待 \\n, 进度信息会被“憋”到进程结束才刷出。
+                - 这里按块读取, 同时把 \\r 视作换行边界, 以便在日志中看到实时进度。
+                """
+                if stream is None:
+                    return
+                buffer = ""
+                while True:
+                    chunk = await stream.read(1024)
+                    if not chunk:
+                        break
+                    text = chunk.decode(errors="ignore")
+                    if not text:
+                        continue
+                    buffer += text
+                    buffer = buffer.replace("\r", "\n")
+                    lines = buffer.split("\n")
+                    buffer = lines[-1]
+                    for line in lines[:-1]:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        # 将 stderr 输出也视作 INFO 级别日志, 以便统一查看进度
+                        if is_stderr:
+                            log.info(f"[gallery-dl][stderr] {line}")
+                        else:
+                            log.info(f"[gallery-dl] {line}")
+                # flush 剩余缓冲
+                buffer = buffer.strip()
+                if buffer:
+                    if is_stderr:
+                        log.info(f"[gallery-dl][stderr] {buffer}")
+                    else:
+                        log.info(f"[gallery-dl] {buffer}")
+
+            # 实时读取 stdout/stderr，避免一次性缓冲导致的延迟
+            await asyncio.gather(
+                _log_stream(proc.stdout, is_stderr=False),
+                _log_stream(proc.stderr, is_stderr=True),
+            )
+            await proc.wait()
+
+            if proc.returncode == 0:
+                log.info(f'gallery-dl 下载成功({site}):"{url}"')
+                return True
+            log.warning(f'gallery-dl 下载失败({site}),退出码:{proc.returncode},"{url}"')
+            return False
+        except FileNotFoundError:
+            log.error("未找到 gallery-dl 可执行文件,请确认已正确安装。")
+        except Exception as e:
+            log.exception(
+                f'运行 gallery-dl 时发生异常({site}),链接:"{url}",{_t(KeyWord.REASON)}:"{e}"'
+            )
+        return False
+
+    def env_save_directory(self, message: pyrogram.types.Message) -> str:
         save_directory = self.app.save_directory
         for placeholder in SaveDirectoryPrefix():
             if placeholder in save_directory:
                 if placeholder == SaveDirectoryPrefix.CHAT_ID:
                     save_directory = save_directory.replace(
                         placeholder,
-                        str(getattr(getattr(message, 'chat'), 'id', 'UNKNOWN_CHAT_ID'))
+                        str(getattr(getattr(message, "chat"), "id", "UNKNOWN_CHAT_ID")),
                     )
                 if placeholder == SaveDirectoryPrefix.MIME_TYPE:
                     for dtype in DownloadType():
                         if getattr(message, dtype, None):
-                            save_directory = save_directory.replace(
-                                placeholder,
-                                dtype
-                            )
+                            save_directory = save_directory.replace(placeholder, dtype)
         # 附加标签子目录(优先级: 单条消息标签 > 监听频道标签)
         try:
-            chat_id = getattr(getattr(message, 'chat', None), 'id', None)
-            mid = getattr(message, 'id', None)
+            chat_id = getattr(getattr(message, "chat", None), "id", None)
+            mid = getattr(message, "id", None)
             tag = None
             if chat_id is not None and mid is not None:
                 tag = self.message_tag_map.get((chat_id, mid))
@@ -135,24 +243,242 @@ class TelegramRestrictedMediaDownloader(Bot):
                 tag = self.listen_download_tag_by_chatid.get(chat_id)
             if isinstance(tag, str) and tag.strip():
                 from module.path_tool import validate_title
-                save_directory = os.path.join(save_directory, validate_title(tag.strip()))
+
+                save_directory = os.path.join(
+                    save_directory, validate_title(tag.strip())
+                )
         except Exception:
             pass
         return save_directory
 
     async def get_download_link_from_bot(
-            self,
-            client: pyrogram.Client,
-            message: pyrogram.types.Message,
-            with_upload: Union[dict, None] = None
+        self,
+        client: pyrogram.Client,
+        message: pyrogram.types.Message,
+        with_upload: Union[dict, None] = None,
     ):
-        link_meta: Union[dict, None] = await super().get_download_link_from_bot(client, message)
+        link_meta: Union[dict, None] = await super().get_download_link_from_bot(
+            client, message
+        )
+
+        # 当父类无法解析(非 t.me 链接)时，尝试处理外部链接(X/Twitter、Instagram、Iwara)
         if link_meta is None:
+            text = (message.text or "").strip()
+            # 提取 /download 后的参数
+            parts = text.split()
+            if parts and parts[0] == "/download":
+                parts = parts[1:]
+
+            # 识别不同站点链接
+            x_patterns: Tuple[str, ...] = (
+                r"https?://(?:www\.)?x\.com/[^\s]+",
+                r"https?://(?:mobile\.)?twitter\.com/[^\s]+",
+                r"https?://t\.co/[^\s]+",
+            )
+            ig_patterns: Tuple[str, ...] = (
+                r"https?://(?:www\.)?instagram\.com/[^\s]+",
+                r"https?://(?:www\.)?instagr\.am/[^\s]+",
+            )
+            iwara_patterns: Tuple[str, ...] = (r"https?://(?:www\.)?iwara\.tv/[^\s]+",)
+
+            def _collect(  # type: ignore[return-type]
+                tokens: Iterable[str], patterns: Tuple[str, ...]
+            ) -> set:
+                result: set = set()
+                for token in tokens:
+                    for pat in patterns:
+                        if re.match(pat, token):
+                            result.add(token)
+                            break
+                return result
+
+            x_links: set = _collect(parts, x_patterns)
+            ig_links: set = _collect(parts, ig_patterns)
+            iwara_links: set = _collect(parts, iwara_patterns)
+
+            # 末尾追加标签(与 t.me 分支一致的 UX):
+            # /download url1 [url2 ...] [标签]
+            tag: Union[str, None] = None
+            if parts:
+                last_token = parts[-1]
+                if not any(
+                    re.match(p, last_token)
+                    for p in (*x_patterns, *ig_patterns, *iwara_patterns)
+                ):
+                    tag = last_token
+
+            # 若既不是 t.me 链接，又没有识别到外部站点，交由后续逻辑处理
+            if not x_links and not ig_links and not iwara_links:
+                return None
+
+            # 1. 先尝试通过 gallery-dl 下载所有外部链接
+            total_x = len(x_links)
+            total_ig = len(ig_links)
+            total_iwara = len(iwara_links)
+            status_lines = [
+                "🔄 检测到外部链接，正在通过 gallery-dl 下载…",
+            ]
+            if total_x:
+                status_lines.append(f"• X/Twitter: {total_x} 条")
+            if total_ig:
+                status_lines.append(f"• Instagram: {total_ig} 条")
+            if total_iwara:
+                status_lines.append(f"• Iwara: {total_iwara} 条")
+
+            status_msg = await self.safe_process_message(
+                client=client,
+                message=message,
+                text=status_lines,
+            )
+
+            gd_success_x: list = []
+            gd_fail_x: list = []
+            gd_success_ig: list = []
+            gd_fail_ig: list = []
+            gd_success_iw: list = []
+            gd_fail_iw: list = []
+
+            # 串行处理，避免对站点造成过大压力
+            for url in x_links:
+                if await self._run_gallery_dl(url=url, site="X/Twitter"):
+                    gd_success_x.append(url)
+                else:
+                    gd_fail_x.append(url)
+            for url in ig_links:
+                if await self._run_gallery_dl(url=url, site="Instagram"):
+                    gd_success_ig.append(url)
+                else:
+                    gd_fail_ig.append(url)
+            for url in iwara_links:
+                if await self._run_gallery_dl(url=url, site="Iwara"):
+                    gd_success_iw.append(url)
+                else:
+                    gd_fail_iw.append(url)
+
+            # 2. 对 gallery-dl 失败的 X/Twitter 链接走“转发机器人”回退逻辑
+            converter_success = 0
+            converter_fail: list = []
+
+            if gd_fail_x:
+                converter_cfg: dict = (
+                    self.app.config.get("converter", {})
+                    if isinstance(self.app.config, dict)
+                    else {}
+                )
+                if not converter_cfg.get("enabled"):
+                    log.warning(
+                        f"gallery-dl 无法处理以下 X/Twitter 链接，且未启用转换机器人回退: {gd_fail_x}"
+                    )
+                else:
+                    bot_username: Union[str, None] = converter_cfg.get("bot_username")
+                    timeout: int = int(converter_cfg.get("timeout") or 180)
+                    if not bot_username:
+                        log.warning(
+                            "gallery-dl 处理 X/Twitter 失败且未配置 converter.bot_username，"
+                            f"失败链接: {gd_fail_x}"
+                        )
+                    else:
+                        log.info(
+                            f"gallery-dl 下载失败,启用回退转换机器人 {bot_username} 处理 X/Twitter 链接。"
+                        )
+                        for url in gd_fail_x:
+                            try:
+                                media_msg = await self.fetch_from_converter(
+                                    url=url, converter=bot_username, timeout=timeout
+                                )
+                                if isinstance(media_msg, list):
+                                    for m in media_msg:
+                                        if tag:
+                                            try:
+                                                _cid = getattr(
+                                                    getattr(m, "chat", None), "id", None
+                                                )
+                                                _mid = getattr(m, "id", None)
+                                                if (
+                                                    _cid is not None
+                                                    and _mid is not None
+                                                ):
+                                                    self.message_tag_map[
+                                                        (_cid, _mid)
+                                                    ] = tag
+                                            except Exception:
+                                                pass
+                                        await self.create_download_task(
+                                            message_ids=m,
+                                            with_upload=with_upload,
+                                            single_link=True,
+                                        )
+                                        converter_success += 1
+                                else:
+                                    if tag:
+                                        try:
+                                            _cid = getattr(
+                                                getattr(media_msg, "chat", None),
+                                                "id",
+                                                None,
+                                            )
+                                            _mid = getattr(media_msg, "id", None)
+                                            if _cid is not None and _mid is not None:
+                                                self.message_tag_map[(_cid, _mid)] = tag
+                                        except Exception:
+                                            pass
+                                    await self.create_download_task(
+                                        message_ids=media_msg,
+                                        with_upload=with_upload,
+                                        single_link=True,
+                                    )
+                                    converter_success += 1
+                            except Exception as e:
+                                log.warning(
+                                    f'X链接转换失败(作为 gallery-dl 回退):"{url}"，原因:{e}'
+                                )
+                                converter_fail.append(url)
+
+            # 3. 汇总提示
+            summary: list = []
+            if gd_success_x or gd_success_ig or gd_success_iw:
+                summary.append("✅ gallery-dl 下载完成概览:")
+                if gd_success_x:
+                    summary.append(f"• X/Twitter 成功 {len(gd_success_x)} 条")
+                if gd_success_ig:
+                    summary.append(f"• Instagram 成功 {len(gd_success_ig)} 条")
+                if gd_success_iw:
+                    summary.append(f"• Iwara 成功 {len(gd_success_iw)} 条")
+            if gd_fail_ig or gd_fail_iw:
+                summary.append(
+                    "⚠️ 以下链接 gallery-dl 下载失败(未配置回退逻辑，仅记录):"
+                )
+                summary.extend(gd_fail_ig + gd_fail_iw)
+            if gd_fail_x:
+                summary.append("⚠️ 以下 X/Twitter 链接 gallery-dl 下载失败:")
+                summary.extend(gd_fail_x)
+            if converter_success:
+                summary.append(
+                    f"✅ 已通过转换机器人提交 {converter_success} 个 X/Twitter 媒体到下载队列。"
+                )
+            if converter_fail:
+                summary.append(
+                    "❌ 以下 X/Twitter 链接在转换机器人回退中仍然失败(请确认已在转换机器人处 /start)："
+                )
+                summary.extend(converter_fail)
+            if not summary:
+                summary.append("ℹ️ 未找到可处理的外部链接或所有下载均已失败。")
+
+            await self.safe_edit_message(
+                client=client,
+                message=message,
+                last_message_id=status_msg.id,
+                text="\n".join(summary),
+            )
             return None
-        right_link: set = link_meta.get('right_link')
-        invalid_link: set = link_meta.get('invalid_link')
-        last_bot_message: Union[pyrogram.types.Message, None] = link_meta.get('last_bot_message')
-        tag: Union[str, None] = link_meta.get('tag')
+        right_link: set = link_meta.get("right_link")
+        invalid_link: set = link_meta.get("invalid_link")
+        last_bot_message: Union[pyrogram.types.Message, None] = link_meta.get(
+            "last_bot_message"
+        )
+        tag: Union[str, None] = link_meta.get("tag")
+        # 规范化用于去重的键
+        right_link_canon: set = {canonical_link_str(l) for l in (right_link or set())}
         # 记录链接级别的标签, 在后续创建任务时映射到具体消息
         if tag:
             for rl in list(right_link or []):
@@ -160,9 +486,22 @@ class TelegramRestrictedMediaDownloader(Bot):
                     self.link_tag_map[rl] = tag
                 except Exception:
                     pass
-        exist_link: set = set([_ for _ in right_link if _ in self.bot_task_link])
-        exist_link.update(right_link & DownloadTask.COMPLETE_LINK)
+        # 命中“进行中/已分配”或“已完成”的规范化键
+        existed_canon = set()
+        existed_canon.update(
+            {c for c in right_link_canon if c in self.bot_task_link_canon}
+        )
+        existed_canon.update(
+            {c for c in right_link_canon if c in DownloadTask.COMPLETE_LINK}
+        )
+        # 将规范化命中映射回原字符串用于展示
+        canon_map = {canonical_link_str(s): s for s in (right_link or set())}
+        exist_link = set()
+        for c in existed_canon:
+            if c in canon_map:
+                exist_link.add(canon_map[c])
         right_link -= exist_link
+        right_link_canon -= existed_canon
         if last_bot_message:
             await self.safe_edit_message(
                 client=client,
@@ -171,191 +510,220 @@ class TelegramRestrictedMediaDownloader(Bot):
                 text=self.update_text(
                     right_link=right_link,
                     exist_link=exist_link,
-                    invalid_link=invalid_link
-                )
+                    invalid_link=invalid_link,
+                ),
             )
         else:
-            log.warning('消息过长编辑频繁,暂时无法通过机器人显示通知。')
+            log.warning("消息过长编辑频繁,暂时无法通过机器人显示通知。")
         links: Union[set, None] = self.__process_links(link=list(right_link))
 
         if links is None:
             return None
         for link in links:
             task: dict = await self.create_download_task(
-                message_ids=link,
-                retry=None,
-                with_upload=with_upload
+                message_ids=link, retry=None, with_upload=with_upload
             )
-            invalid_link.add(link) if task.get('status') == DownloadStatus.FAILURE else self.bot_task_link.add(link)
+            if task.get("status") == DownloadStatus.FAILURE:
+                invalid_link.add(link)
+            else:
+                self.bot_task_link.add(link)
+                try:
+                    self.bot_task_link_canon.add(canonical_link_str(link))
+                except Exception:
+                    pass
         right_link -= invalid_link
         await self.safe_edit_message(
             client=client,
             message=message,
             last_message_id=last_bot_message.id,
             text=self.update_text(
-                right_link=right_link,
-                exist_link=exist_link,
-                invalid_link=invalid_link
-            )
+                right_link=right_link, exist_link=exist_link, invalid_link=invalid_link
+            ),
         )
 
+    async def fetch_from_converter(
+        self, url: str, converter: str, timeout: int = 180
+    ) -> Union[pyrogram.types.Message, list]:
+        """将X/Twitter链接发送至指定转换机器人并等待媒体返回。"""
+        conv = converter if converter.startswith("@") else f"@{converter}"
+
+        # 获取发送前最新消息ID
+        last_id = 0
+        try:
+            async for m in self.app.client.get_chat_history(conv, limit=1):
+                last_id = max(last_id, getattr(m, "id", 0))
+        except Exception:
+            # 可能首次对话，需要 /start；交由后续流程报错提示
+            pass
+
+        # 发送链接
+        await self.app.client.send_message(conv, url)
+
+        # 轮询等待新媒体消息
+        start_ts = datetime.datetime.now().timestamp()
+        collected: list = []
+        seen: set = set()
+        while datetime.datetime.now().timestamp() - start_ts < timeout:
+            try:
+                async for m in self.app.client.get_chat_history(conv, limit=10):
+                    mid = getattr(m, "id", 0)
+                    if mid <= last_id or mid in seen:
+                        continue
+                    seen.add(mid)
+                    from_user = getattr(m, "from_user", None)
+                    if from_user and getattr(from_user, "is_bot", False):
+                        # 命中媒体
+                        if any(getattr(m, dtype, None) for dtype in DownloadType()):
+                            collected.append(m)
+                if collected:
+                    # 若有多条媒体，一并返回
+                    return collected[0] if len(collected) == 1 else collected
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+
+        raise TimeoutError("等待转换机器人返回超时")
+
     async def get_upload_link_from_bot(
-            self,
-            client: pyrogram.Client,
-            message: pyrogram.types.Message,
-            delete: bool = False,
-            save_directory: str = None
+        self,
+        client: pyrogram.Client,
+        message: pyrogram.types.Message,
+        delete: bool = False,
+        save_directory: str = None,
     ):
-        link_meta: Union[dict, None] = await super().get_upload_link_from_bot(client, message)
+        link_meta: Union[dict, None] = await super().get_upload_link_from_bot(
+            client, message
+        )
         if link_meta is None:
             return None
-        file_path: str = link_meta.get('file_path')
-        target_link: str = link_meta.get('target_link')
+        file_path: str = link_meta.get("file_path")
+        target_link: str = link_meta.get("target_link")
         try:
             await self.uploader.create_upload_task(
-                link=target_link,
-                file_path=file_path
+                link=target_link, file_path=file_path
             )
         except ValueError:
             await client.send_message(
                 chat_id=message.from_user.id,
                 reply_parameters=ReplyParameters(message_id=message.id),
-                text=f'⬇️⬇️⬇️目标频道不存在⬇️⬇️⬇️\n{target_link}'
+                text=f"⬇️⬇️⬇️目标频道不存在⬇️⬇️⬇️\n{target_link}",
             )
 
-    @staticmethod
-    async def __send_pay_qr(
-            client: pyrogram.Client,
-            chat_id: Union[int, str],
-            load_name: str
-    ) -> Union[list, str, None]:
-        try:
-            last_msg = await client.send_message(
-                chat_id=chat_id,
-                text=f'🙈🙈🙈请稍后🙈🙈🙈{load_name}加载中. . .',
-                link_preview_options=LINK_PREVIEW_OPTIONS
-            )
-            tasks = [client.send_photo(
-                chat_id=chat_id,
-                photo=Base64Image.base64_to_binary_io(Base64Image.pay),
-                disable_notification=True
-            ),
-                client.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=last_msg.id,
-                    text=f'🐵🐵🐵{load_name}加载成功!🐵🐵🐵'
-                )]
-            await asyncio.gather(*tasks)
-        except Exception as e:
-            return str(e)
-
-    async def start(
-            self,
-            client: pyrogram.Client,
-            message: pyrogram.types.Message
-    ):
+    async def start(self, client: pyrogram.Client, message: pyrogram.types.Message):
         self.last_client: pyrogram.Client = client
         self.last_message: pyrogram.types.Message = message
-        if self.gc.config.get(BotCallbackText.NOTICE):
-            chat_id = message.from_user.id
-            await asyncio.gather(
-                self.__send_pay_qr(
-                    client=client,
-                    chat_id=chat_id,
-                    load_name='机器人'
-                ),
-                super().start(client, message),
-                client.send_message(
-                    chat_id=chat_id,
-                    text='😊😊😊欢迎使用😊😊😊您的支持是我持续更新的动力。',
-                    link_preview_options=LINK_PREVIEW_OPTIONS)
-            )
+        chat_id = message.from_user.id
+        # 简化欢迎信息: 仅保留机器人加载成功提示 + 可用命令列表
+        await client.send_message(
+            chat_id=chat_id,
+            text="🐵🐵🐵机器人加载成功!🐵🐵🐵",
+            link_preview_options=LINK_PREVIEW_OPTIONS,
+        )
+        # 继续输出帮助信息(含「可用命令」与「设置」按钮), 但不再附带赞助图片/按钮
+        await super().start(client, message)
 
-    async def callback_data(self, client: pyrogram.Client, callback_query: pyrogram.types.CallbackQuery):
+    async def callback_data(
+        self, client: pyrogram.Client, callback_query: pyrogram.types.CallbackQuery
+    ):
         callback_data = await super().callback_data(client, callback_query)
         kb = KeyboardButton(callback_query)
         if callback_data is None:
             return None
         elif callback_data == BotCallbackText.NOTICE:
             try:
-                self.gc.config[BotCallbackText.NOTICE] = not self.gc.config.get(BotCallbackText.NOTICE)
+                self.gc.config[BotCallbackText.NOTICE] = not self.gc.config.get(
+                    BotCallbackText.NOTICE
+                )
                 self.gc.save_config(self.gc.config)
-                n_s: str = '启用' if self.gc.config.get(BotCallbackText.NOTICE) else '禁用'
-                n_p: str = f'机器人消息通知已{n_s}。'
+                n_s: str = (
+                    "启用" if self.gc.config.get(BotCallbackText.NOTICE) else "禁用"
+                )
+                n_p: str = f"机器人消息通知已{n_s}。"
                 log.info(n_p)
-                console.log(n_p, style='#FF4689')
-                await kb.toggle_setting_button(global_config=self.gc.config, user_config=self.app.config)
+                console.log(n_p, style="#FF4689")
+                await kb.toggle_setting_button(
+                    global_config=self.gc.config, user_config=self.app.config
+                )
             except Exception as e:
                 await callback_query.message.reply_text(
-                    '启用或禁用机器人消息通知失败\n(具体原因请前往终端查看报错信息)')
+                    "启用或禁用机器人消息通知失败\n(具体原因请前往终端查看报错信息)"
+                )
                 log.error(f'启用或禁用机器人消息通知失败,{_t(KeyWord.REASON)}:"{e}"')
         elif callback_data == BotCallbackText.PAY:
             res: Union[str, None] = await self.__send_pay_qr(
                 client=client,
                 chat_id=callback_query.from_user.id,  # v1.6.5 修复发送图片时chat_id错误问题。
-                load_name='收款码'
+                load_name="收款码",
             )
             MetaData.pay()
             if res:
-                msg = '🥰🥰🥰\n收款「二维码」已发送至您的「终端」十分感谢您的支持!'
+                msg = "🥰🥰🥰\n收款「二维码」已发送至您的「终端」十分感谢您的支持!"
             else:
-                msg = '🥰🥰🥰\n收款「二维码」已发送至您的「终端」与「对话框」十分感谢您的支持!'
+                msg = "🥰🥰🥰\n收款「二维码」已发送至您的「终端」与「对话框」十分感谢您的支持!"
             await callback_query.message.reply_text(msg)
         elif callback_data == BotCallbackText.BACK_HELP:
             meta: dict = await self.help()
-            await callback_query.message.edit_text(meta.get('text'))
-            await callback_query.message.edit_reply_markup(meta.get('keyboard'))
+            await callback_query.message.edit_text(meta.get("text"))
+            await callback_query.message.edit_reply_markup(meta.get("keyboard"))
         elif callback_data == BotCallbackText.BACK_TABLE:
             meta: dict = await self.table()
-            await callback_query.message.edit_text(meta.get('text'))
-            await callback_query.message.edit_reply_markup(meta.get('keyboard'))
-        elif callback_data in (BotCallbackText.DOWNLOAD, BotCallbackText.DOWNLOAD_UPLOAD):
+            await callback_query.message.edit_text(meta.get("text"))
+            await callback_query.message.edit_reply_markup(meta.get("keyboard"))
+        elif callback_data in (
+            BotCallbackText.DOWNLOAD,
+            BotCallbackText.DOWNLOAD_UPLOAD,
+        ):
             if not isinstance(self.cd.data, dict):
                 return None
             meta: Union[dict, None] = self.cd.data.copy()
             self.cd.data = None
-            origin_link: str = meta.get('origin_link')
-            target_link: str = meta.get('target_link')
-            start_id: Union[int, None] = meta.get('start_id')
-            end_id: Union[int, None] = meta.get('end_id')
+            origin_link: str = meta.get("origin_link")
+            target_link: str = meta.get("target_link")
+            start_id: Union[int, None] = meta.get("start_id")
+            end_id: Union[int, None] = meta.get("end_id")
             if callback_data == BotCallbackText.DOWNLOAD:
-                self.last_message.text = f'/download {origin_link} {start_id} {end_id}'
+                self.last_message.text = f"/download {origin_link} {start_id} {end_id}"
                 await self.get_download_link_from_bot(
-                    client=self.last_client,
-                    message=self.last_message
+                    client=self.last_client, message=self.last_message
                 )
             elif callback_data == BotCallbackText.DOWNLOAD_UPLOAD:
-                self.last_message.text = f'/download {origin_link} {start_id} {end_id}'
+                self.last_message.text = f"/download {origin_link} {start_id} {end_id}"
                 await self.get_download_link_from_bot(
                     client=self.last_client,
                     message=self.last_message,
                     with_upload={
-                        'link': target_link,
-                        'file_name': None,
-                        'with_delete': False
-                    }
+                        "link": target_link,
+                        "file_name": None,
+                        "with_delete": False,
+                    },
                 )
             await kb.task_assign_button()
         elif callback_data == BotCallbackText.LOOKUP_LISTEN_INFO:
             await self.app.client.send_message(
                 chat_id=callback_query.message.from_user.id,
-                text='/listen_info',
-                link_preview_options=LINK_PREVIEW_OPTIONS
+                text="/listen_info",
+                link_preview_options=LINK_PREVIEW_OPTIONS,
             )
         elif callback_data == BotCallbackText.SHUTDOWN:
             try:
-                self.app.config['is_shutdown'] = not self.app.config.get('is_shutdown')
+                self.app.config["is_shutdown"] = not self.app.config.get("is_shutdown")
                 self.app.save_config(self.app.config)
-                s_s: str = '启用' if self.app.config.get('is_shutdown') else '禁用'
-                s_p: str = f'退出后关机已{s_s}。'
+                s_s: str = "启用" if self.app.config.get("is_shutdown") else "禁用"
+                s_p: str = f"退出后关机已{s_s}。"
                 log.info(s_p)
-                console.log(s_p, style='#FF4689')
-                await kb.toggle_setting_button(global_config=self.gc.config, user_config=self.app.config)
+                console.log(s_p, style="#FF4689")
+                await kb.toggle_setting_button(
+                    global_config=self.gc.config, user_config=self.app.config
+                )
             except Exception as e:
-                await callback_query.message.reply_text('启用或禁用自动关机失败\n(具体原因请前往终端查看报错信息)')
+                await callback_query.message.reply_text(
+                    "启用或禁用自动关机失败\n(具体原因请前往终端查看报错信息)"
+                )
                 log.error(f'启用或禁用自动关机失败,{_t(KeyWord.REASON)}:"{e}"')
         elif callback_data == BotCallbackText.SETTING:
-            await kb.toggle_setting_button(global_config=self.gc.config, user_config=self.app.config)
+            await kb.toggle_setting_button(
+                global_config=self.gc.config, user_config=self.app.config
+            )
         elif callback_data == BotCallbackText.EXPORT_TABLE:
             await kb.toggle_table_button(config=self.gc.config)
         elif callback_data == BotCallbackText.DOWNLOAD_SETTING:
@@ -365,195 +733,222 @@ class TelegramRestrictedMediaDownloader(Bot):
         elif callback_data == BotCallbackText.FORWARD_SETTING:
             await kb.toggle_forward_setting_button(global_config=self.gc.config)
         elif callback_data in (BotCallbackText.LINK_TABLE, BotCallbackText.COUNT_TABLE):
-            _prompt_string: str = ''
-            _false_text: str = ''
-            _choice: str = ''
+            _prompt_string: str = ""
+            _false_text: str = ""
+            _choice: str = ""
             res: Union[bool, None] = None
             if callback_data == BotCallbackText.LINK_TABLE:
-                _prompt_string: str = '链接统计表'
-                _false_text: str = '😵😵😵没有链接需要统计。'
+                _prompt_string: str = "链接统计表"
+                _false_text: str = "😵😵😵没有链接需要统计。"
                 _choice: str = BotCallbackText.EXPORT_LINK_TABLE
-                res: Union[bool, None] = self.app.print_link_table(DownloadTask.LINK_INFO)
+                res: Union[bool, None] = self.app.print_link_table(
+                    DownloadTask.LINK_INFO
+                )
             elif callback_data == BotCallbackText.COUNT_TABLE:
-                _prompt_string: str = '计数统计表'
-                _false_text: str = '😵😵😵当前没有任何下载。'
+                _prompt_string: str = "计数统计表"
+                _false_text: str = "😵😵😵当前没有任何下载。"
                 _choice: str = BotCallbackText.EXPORT_COUNT_TABLE
                 res: Union[bool, None] = self.app.print_count_table()
             if res:
-                await callback_query.message.edit_text(f'👌👌👌`{_prompt_string}`已发送至您的「终端」请注意查收。')
+                await callback_query.message.edit_text(
+                    f"👌👌👌`{_prompt_string}`已发送至您的「终端」请注意查收。"
+                )
                 await kb.choice_export_table_button(choice=_choice)
                 return None
             elif res is False:
                 await callback_query.message.edit_text(_false_text)
             else:
                 await callback_query.message.edit_text(
-                    f'😵‍💫😵‍💫😵‍💫`{_prompt_string}`打印失败。\n(具体原因请前往终端查看报错信息)')
+                    f"😵‍💫😵‍💫😵‍💫`{_prompt_string}`打印失败。\n(具体原因请前往终端查看报错信息)"
+                )
             await kb.back_table_button()
-        elif callback_data in (BotCallbackText.TOGGLE_LINK_TABLE, BotCallbackText.TOGGLE_COUNT_TABLE):
+        elif callback_data in (
+            BotCallbackText.TOGGLE_LINK_TABLE,
+            BotCallbackText.TOGGLE_COUNT_TABLE,
+        ):
+
             async def _toggle_button(_table_type):
-                export_config: dict = self.gc.config.get('export_table')
+                export_config: dict = self.gc.config.get("export_table")
                 export_config[_table_type] = not export_config.get(_table_type)
-                t_t: str = '链接统计表' if _table_type == 'link' else '计数统计表'
-                s_t: str = '启用' if export_config.get(_table_type) else '禁用'
-                t_p: str = f'退出后导出{t_t}已{s_t}。'
-                console.log(t_p, style='#FF4689')
+                t_t: str = "链接统计表" if _table_type == "link" else "计数统计表"
+                s_t: str = "启用" if export_config.get(_table_type) else "禁用"
+                t_p: str = f"退出后导出{t_t}已{s_t}。"
+                console.log(t_p, style="#FF4689")
                 log.info(t_p)
                 self.gc.save_config(self.gc.config)
-                await kb.toggle_table_button(
-                    config=self.gc.config,
-                    choice=_table_type
-                )
+                await kb.toggle_table_button(config=self.gc.config, choice=_table_type)
 
             if callback_data == BotCallbackText.TOGGLE_LINK_TABLE:
-                await _toggle_button('link')
+                await _toggle_button("link")
             elif callback_data == BotCallbackText.TOGGLE_COUNT_TABLE:
-                await _toggle_button('count')
-        elif callback_data in (BotCallbackText.EXPORT_LINK_TABLE, BotCallbackText.EXPORT_COUNT_TABLE):
-            _prompt_string: str = ''
+                await _toggle_button("count")
+        elif callback_data in (
+            BotCallbackText.EXPORT_LINK_TABLE,
+            BotCallbackText.EXPORT_COUNT_TABLE,
+        ):
+            _prompt_string: str = ""
             res: Union[bool, None] = False
             if callback_data == BotCallbackText.EXPORT_LINK_TABLE:
-                _prompt_string: str = '链接统计表'
+                _prompt_string: str = "链接统计表"
                 res: Union[bool, None] = self.app.print_link_table(
-                    link_info=DownloadTask.LINK_INFO,
-                    export=True,
-                    only_export=True
+                    link_info=DownloadTask.LINK_INFO, export=True, only_export=True
                 )
             elif callback_data == BotCallbackText.EXPORT_COUNT_TABLE:
-                _prompt_string: str = '计数统计表'
+                _prompt_string: str = "计数统计表"
                 res: Union[bool, None] = self.app.print_count_table(
-                    export=True,
-                    only_export=True
+                    export=True, only_export=True
                 )
             if res:
                 await callback_query.message.edit_text(
-                    f'✅✅✅`{_prompt_string}`已发送至您的「终端」并已「导出」为表格请注意查收。\n(请查看软件目录下`DownloadRecordForm`文件夹)')
+                    f"✅✅✅`{_prompt_string}`已发送至您的「终端」并已「导出」为表格请注意查收。\n(请查看软件目录下`DownloadRecordForm`文件夹)"
+                )
             elif res is False:
-                await callback_query.message.edit_text('😵😵😵没有链接需要统计。')
+                await callback_query.message.edit_text("😵😵😵没有链接需要统计。")
             else:
                 await callback_query.message.edit_text(
-                    f'😵‍💫😵‍💫😵‍💫`{_prompt_string}`导出失败。\n(具体原因请前往终端查看报错信息)')
+                    f"😵‍💫😵‍💫😵‍💫`{_prompt_string}`导出失败。\n(具体原因请前往终端查看报错信息)"
+                )
             await kb.back_table_button()
-        elif callback_data in (BotCallbackText.UPLOAD_DOWNLOAD, BotCallbackText.UPLOAD_DOWNLOAD_DELETE):
+        elif callback_data in (
+            BotCallbackText.UPLOAD_DOWNLOAD,
+            BotCallbackText.UPLOAD_DOWNLOAD_DELETE,
+        ):
+
             def _toggle_button(_param: str):
                 param: bool = self.gc.get_nesting_config(
                     default_nesting=self.gc.default_upload_nesting,
-                    param='upload',
-                    nesting_param=_param
+                    param="upload",
+                    nesting_param=_param,
                 )
-                self.gc.config.get('upload', self.gc.default_upload_nesting)[_param] = not param
-                u_s: str = '禁用' if param else '开启'
-                u_p: str = ''
-                if _param == 'delete':
+                self.gc.config.get("upload", self.gc.default_upload_nesting)[
+                    _param
+                ] = not param
+                u_s: str = "禁用" if param else "开启"
+                u_p: str = ""
+                if _param == "delete":
                     u_p: str = f'遇到"受限转发"时,下载后上传并"删除上传完成的本地文件"的行为已{u_s}。'
-                elif _param == 'download_upload':
+                elif _param == "download_upload":
                     u_p: str = f'遇到"受限转发"时,下载后上传已{u_s}。'
-                console.log(u_p, style='#FF4689')
+                console.log(u_p, style="#FF4689")
                 log.info(u_p)
 
             try:
                 if callback_data == BotCallbackText.UPLOAD_DOWNLOAD:
-                    _toggle_button('download_upload')
+                    _toggle_button("download_upload")
                 elif callback_data == BotCallbackText.UPLOAD_DOWNLOAD_DELETE:
-                    _toggle_button('delete')
+                    _toggle_button("delete")
                 self.gc.save_config(self.gc.config)
                 await kb.toggle_upload_setting_button(global_config=self.gc.config)
             except Exception as e:
                 await callback_query.message.reply_text(
-                    '上传设置失败\n(具体原因请前往终端查看报错信息)')
+                    "上传设置失败\n(具体原因请前往终端查看报错信息)"
+                )
                 log.error(f'上传设置失败,{_t(KeyWord.REASON)}:"{e}"')
         elif callback_data in (
-                BotCallbackText.TOGGLE_DOWNLOAD_VIDEO,
-                BotCallbackText.TOGGLE_DOWNLOAD_PHOTO,
-                BotCallbackText.TOGGLE_DOWNLOAD_AUDIO,
-                BotCallbackText.TOGGLE_DOWNLOAD_VOICE,
-                BotCallbackText.TOGGLE_DOWNLOAD_ANIMATION,
-                BotCallbackText.TOGGLE_DOWNLOAD_DOCUMENT
+            BotCallbackText.TOGGLE_DOWNLOAD_VIDEO,
+            BotCallbackText.TOGGLE_DOWNLOAD_PHOTO,
+            BotCallbackText.TOGGLE_DOWNLOAD_AUDIO,
+            BotCallbackText.TOGGLE_DOWNLOAD_VOICE,
+            BotCallbackText.TOGGLE_DOWNLOAD_ANIMATION,
+            BotCallbackText.TOGGLE_DOWNLOAD_DOCUMENT,
         ):
+
             def _toggle_download_type_button(_param: str):
                 if _param in self.app.download_type:
                     if len(self.app.download_type) == 1:
                         raise ValueError
-                    f_s = '禁用'
+                    f_s = "禁用"
                     self.app.download_type.remove(_param)
                 else:
-                    f_s = '启用'
+                    f_s = "启用"
                     self.app.download_type.append(_param)
 
                 f_p = f'已{f_s}"{_param}"类型的下载。'
-                console.log(f_p, style='#FF4689')
+                console.log(f_p, style="#FF4689")
                 log.info(f_p)
 
             try:
                 if callback_data == BotCallbackText.TOGGLE_DOWNLOAD_VIDEO:
-                    _toggle_download_type_button('video')
+                    _toggle_download_type_button("video")
                 elif callback_data == BotCallbackText.TOGGLE_DOWNLOAD_PHOTO:
-                    _toggle_download_type_button('photo')
+                    _toggle_download_type_button("photo")
                 elif callback_data == BotCallbackText.TOGGLE_DOWNLOAD_AUDIO:
-                    _toggle_download_type_button('audio')
+                    _toggle_download_type_button("audio")
                 elif callback_data == BotCallbackText.TOGGLE_DOWNLOAD_VOICE:
-                    _toggle_download_type_button('voice')
+                    _toggle_download_type_button("voice")
                 elif callback_data == BotCallbackText.TOGGLE_DOWNLOAD_ANIMATION:
-                    _toggle_download_type_button('animation')
+                    _toggle_download_type_button("animation")
                 elif callback_data == BotCallbackText.TOGGLE_DOWNLOAD_DOCUMENT:
-                    _toggle_download_type_button('document')
-                self.app.config['download_type'] = self.app.download_type
+                    _toggle_download_type_button("document")
+                self.app.config["download_type"] = self.app.download_type
                 self.app.save_config(self.app.config)
                 await kb.toggle_download_setting_button(self.app.config)
             except ValueError:
-                await callback_query.message.reply_text('⚠️⚠️⚠️至少需要选择一个下载类型⚠️⚠️⚠️')
+                await callback_query.message.reply_text(
+                    "⚠️⚠️⚠️至少需要选择一个下载类型⚠️⚠️⚠️"
+                )
             except Exception as e:
                 await callback_query.message.reply_text(
-                    '下载类型设置失败\n(具体原因请前往终端查看报错信息)')
+                    "下载类型设置失败\n(具体原因请前往终端查看报错信息)"
+                )
                 log.error(f'下载类型设置失败,{_t(KeyWord.REASON)}:"{e}"')
         elif callback_data in (
-                BotCallbackText.TOGGLE_FORWARD_VIDEO,
-                BotCallbackText.TOGGLE_FORWARD_PHOTO,
-                BotCallbackText.TOGGLE_FORWARD_AUDIO,
-                BotCallbackText.TOGGLE_FORWARD_VOICE,
-                BotCallbackText.TOGGLE_FORWARD_ANIMATION,
-                BotCallbackText.TOGGLE_FORWARD_DOCUMENT,
-                BotCallbackText.TOGGLE_FORWARD_TEXT
+            BotCallbackText.TOGGLE_FORWARD_VIDEO,
+            BotCallbackText.TOGGLE_FORWARD_PHOTO,
+            BotCallbackText.TOGGLE_FORWARD_AUDIO,
+            BotCallbackText.TOGGLE_FORWARD_VOICE,
+            BotCallbackText.TOGGLE_FORWARD_ANIMATION,
+            BotCallbackText.TOGGLE_FORWARD_DOCUMENT,
+            BotCallbackText.TOGGLE_FORWARD_TEXT,
         ):
+
             def _toggle_forward_type_button(_param: str):
-                _forward_type: dict = self.gc.config.get('forward_type', self.gc.default_forward_type_nesting)
+                _forward_type: dict = self.gc.config.get(
+                    "forward_type", self.gc.default_forward_type_nesting
+                )
                 _status: bool = self.gc.get_nesting_config(
                     default_nesting=self.gc.default_forward_type_nesting,
-                    param='forward_type',
-                    nesting_param=_param
+                    param="forward_type",
+                    nesting_param=_param,
                 )
                 if list(_forward_type.values()).count(True) == 1 and _status:
                     raise ValueError
                 _forward_type[_param] = not _status
-                f_s = '禁用' if _status else '启用'
+                f_s = "禁用" if _status else "启用"
                 f_p = f'已{f_s}"{_param}"类型的转发。'
-                console.log(f_p, style='#FF4689')
+                console.log(f_p, style="#FF4689")
                 log.info(f_p)
 
             try:
                 if callback_data == BotCallbackText.TOGGLE_FORWARD_VIDEO:
-                    _toggle_forward_type_button('video')
+                    _toggle_forward_type_button("video")
                 elif callback_data == BotCallbackText.TOGGLE_FORWARD_PHOTO:
-                    _toggle_forward_type_button('photo')
+                    _toggle_forward_type_button("photo")
                 elif callback_data == BotCallbackText.TOGGLE_FORWARD_AUDIO:
-                    _toggle_forward_type_button('audio')
+                    _toggle_forward_type_button("audio")
                 elif callback_data == BotCallbackText.TOGGLE_FORWARD_VOICE:
-                    _toggle_forward_type_button('voice')
+                    _toggle_forward_type_button("voice")
                 elif callback_data == BotCallbackText.TOGGLE_FORWARD_ANIMATION:
-                    _toggle_forward_type_button('animation')
+                    _toggle_forward_type_button("animation")
                 elif callback_data == BotCallbackText.TOGGLE_FORWARD_DOCUMENT:
-                    _toggle_forward_type_button('document')
+                    _toggle_forward_type_button("document")
                 elif callback_data == BotCallbackText.TOGGLE_FORWARD_TEXT:
-                    _toggle_forward_type_button('text')
+                    _toggle_forward_type_button("text")
                 self.gc.save_config(self.gc.config)
                 await kb.toggle_forward_setting_button(self.gc.config)
             except ValueError:
-                await callback_query.message.reply_text('⚠️⚠️⚠️至少需要选择一个转发类型⚠️⚠️⚠️')
+                await callback_query.message.reply_text(
+                    "⚠️⚠️⚠️至少需要选择一个转发类型⚠️⚠️⚠️"
+                )
             except Exception as e:
                 await callback_query.message.reply_text(
-                    '转发设置失败\n(具体原因请前往终端查看报错信息)')
+                    "转发设置失败\n(具体原因请前往终端查看报错信息)"
+                )
                 log.error(f'转发设置失败,{_t(KeyWord.REASON)}:"{e}"')
-        elif callback_data == BotCallbackText.REMOVE_LISTEN_FORWARD or callback_data.startswith(
-                BotCallbackText.REMOVE_LISTEN_DOWNLOAD):
+        elif (
+            callback_data == BotCallbackText.REMOVE_LISTEN_FORWARD
+            or callback_data.startswith(BotCallbackText.REMOVE_LISTEN_DOWNLOAD)
+        ):
             if callback_data.startswith(BotCallbackText.REMOVE_LISTEN_DOWNLOAD):
                 args: list = callback_data.split()
                 link: str = args[1]
@@ -561,69 +956,85 @@ class TelegramRestrictedMediaDownloader(Bot):
                 self.listen_download_chat.pop(link)
                 await callback_query.message.edit_text(link)
                 await callback_query.message.edit_reply_markup(
-                    KeyboardButton.single_button(text=BotButton.ALREADY_REMOVE, callback_data=BotCallbackText.NULL)
+                    KeyboardButton.single_button(
+                        text=BotButton.ALREADY_REMOVE,
+                        callback_data=BotCallbackText.NULL,
+                    )
                 )
                 p = f'已删除监听下载,频道链接:"{link}"。'
-                console.log(p, style='#FF4689')
-                log.info(f'{p}当前的监听下载信息:{self.listen_download_chat}')
+                console.log(p, style="#FF4689")
+                log.info(f"{p}当前的监听下载信息:{self.listen_download_chat}")
                 return None
             if not isinstance(self.cd.data, dict):
                 return None
             meta: Union[dict, None] = self.cd.data.copy()
             self.cd.data = None
-            link: str = meta.get('link')
+            link: str = meta.get("link")
             self.app.client.remove_handler(self.listen_forward_chat.get(link))
             self.listen_forward_chat.pop(link)
             m: list = link.split()
-            _ = ' -> '.join(m)
+            _ = " -> ".join(m)
             p = f'已删除监听转发,转发规则:"{_}"。'
-            await callback_query.message.edit_text(
-                ' ➡️ '.join(m)
-            )
+            await callback_query.message.edit_text(" ➡️ ".join(m))
             await callback_query.message.edit_reply_markup(
-                KeyboardButton.single_button(text=BotButton.ALREADY_REMOVE, callback_data=BotCallbackText.NULL)
+                KeyboardButton.single_button(
+                    text=BotButton.ALREADY_REMOVE, callback_data=BotCallbackText.NULL
+                )
             )
-            console.log(p, style='#FF4689')
-            log.info(f'{p}当前的监听转发信息:{self.listen_forward_chat}')
+            console.log(p, style="#FF4689")
+            log.info(f"{p}当前的监听转发信息:{self.listen_forward_chat}")
         elif callback_data in (
-                BotCallbackText.DOWNLOAD_CHAT_FILTER,  # 主页面。
-                BotCallbackText.DOWNLOAD_CHAT_DATE_FILTER,  # 下载日期范围设置页面。
-                BotCallbackText.DOWNLOAD_CHAT_DTYPE_FILTER,  # 下载类型设置页面。
-                BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_VIDEO,
-                BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_PHOTO,
-                BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_AUDIO,
-                BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_VOICE,
-                BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_ANIMATION,
-                BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_DOCUMENT,
-                BotCallbackText.DOWNLOAD_CHAT_ID,  # 执行任务。
-                BotCallbackText.DOWNLOAD_CHAT_ID_CANCEL,  # 取消任务。
-                BotCallbackText.FILTER_START_DATE,  # 设置下载起始日期。
-                BotCallbackText.FILTER_END_DATE  # 设置下载结束日期。
+            BotCallbackText.DOWNLOAD_CHAT_FILTER,  # 主页面。
+            BotCallbackText.DOWNLOAD_CHAT_DATE_FILTER,  # 下载日期范围设置页面。
+            BotCallbackText.DOWNLOAD_CHAT_DTYPE_FILTER,  # 下载类型设置页面。
+            BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_VIDEO,
+            BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_PHOTO,
+            BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_AUDIO,
+            BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_VOICE,
+            BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_ANIMATION,
+            BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_DOCUMENT,
+            BotCallbackText.DOWNLOAD_CHAT_ID,  # 执行任务。
+            BotCallbackText.DOWNLOAD_CHAT_ID_CANCEL,  # 取消任务。
+            BotCallbackText.FILTER_START_DATE,  # 设置下载起始日期。
+            BotCallbackText.FILTER_END_DATE,  # 设置下载结束日期。
         ) or callback_data.startswith(
             (
-                    'time_inc_',
-                    'time_dec_',
-                    'set_time_',
-                    'set_specific_time_',
-                    'adjust_step_'
+                "time_inc_",
+                "time_dec_",
+                "set_time_",
+                "set_specific_time_",
+                "adjust_step_",
             )  # 切换月份,选择日期。
         ):
             chat_id = BotCallbackText.DOWNLOAD_CHAT_ID
 
             def _get_update_time():
-                _start_timestamp = self.download_chat_filter[chat_id]['date_range'][
-                    'start_date']
-                _end_timestamp = self.download_chat_filter[chat_id]['date_range']['end_date']
-                _start_time = datetime.datetime.fromtimestamp(_start_timestamp) if _start_timestamp else '未定义'
-                _end_time = datetime.datetime.fromtimestamp(_end_timestamp) if _end_timestamp else '未定义'
+                _start_timestamp = self.download_chat_filter[chat_id]["date_range"][
+                    "start_date"
+                ]
+                _end_timestamp = self.download_chat_filter[chat_id]["date_range"][
+                    "end_date"
+                ]
+                _start_time = (
+                    datetime.datetime.fromtimestamp(_start_timestamp)
+                    if _start_timestamp
+                    else "未定义"
+                )
+                _end_time = (
+                    datetime.datetime.fromtimestamp(_end_timestamp)
+                    if _end_timestamp
+                    else "未定义"
+                )
                 return _start_time, _end_time
 
             def _get_format_dtype():
                 _download_type = []
-                for _dtype, _status in self.download_chat_filter[chat_id]['download_type'].items():
+                for _dtype, _status in self.download_chat_filter[chat_id][
+                    "download_type"
+                ].items():
                     if _status:
                         _download_type.append(_t(_dtype))
-                return ','.join(_download_type)
+                return ",".join(_download_type)
 
             def _remove_chat_id(_chat_id):
                 if _chat_id in self.download_chat_filter:
@@ -631,37 +1042,40 @@ class TelegramRestrictedMediaDownloader(Bot):
                     log.info(f'"{_chat_id}"已从{self.download_chat_filter}中移除。')
 
             def _filter_prompt():
-                return f'💬下载频道:`{chat_id}`\n⏮️当前选择的起始日期为:{_get_update_time()[0]}\n⏭️当前选择的结束日期为:{_get_update_time()[1]}\n📝当前选择的下载类型为:{_get_format_dtype()}'
+                return f"💬下载频道:`{chat_id}`\n⏮️当前选择的起始日期为:{_get_update_time()[0]}\n⏭️当前选择的结束日期为:{_get_update_time()[1]}\n📝当前选择的下载类型为:{_get_format_dtype()}"
 
             async def _verification_time(_start_time, _end_time) -> bool:
-                if isinstance(_start_time, datetime.datetime) and isinstance(_end_time, datetime.datetime):
+                if isinstance(_start_time, datetime.datetime) and isinstance(
+                    _end_time, datetime.datetime
+                ):
                     if _start_time > _end_time:
                         await callback_query.message.reply_text(
-                            text=f'❌❌❌日期设置失败❌❌❌\n'
-                                 f'`起始日期({_start_time})`>`结束日期({_end_time})`\n'
+                            text=f"❌❌❌日期设置失败❌❌❌\n"
+                            f"`起始日期({_start_time})`>`结束日期({_end_time})`\n"
                         )
                         return False
                     elif _start_time == _end_time:
                         await callback_query.message.reply_text(
-                            text=f'❌❌❌日期设置失败❌❌❌\n'
-                                 f'`起始日期({_start_time})`=`结束日期({_end_time})`\n'
+                            text=f"❌❌❌日期设置失败❌❌❌\n"
+                            f"`起始日期({_start_time})`=`结束日期({_end_time})`\n"
                         )
                         return False
                 return True
 
-            if callback_data in (BotCallbackText.DOWNLOAD_CHAT_ID, BotCallbackText.DOWNLOAD_CHAT_ID_CANCEL):  # 执行或取消任务。
-                BotCallbackText.DOWNLOAD_CHAT_ID = 'download_chat_id'
+            if callback_data in (
+                BotCallbackText.DOWNLOAD_CHAT_ID,
+                BotCallbackText.DOWNLOAD_CHAT_ID_CANCEL,
+            ):  # 执行或取消任务。
+                BotCallbackText.DOWNLOAD_CHAT_ID = "download_chat_id"
                 if callback_data == chat_id:
                     await callback_query.message.edit_text(
-                        text=f'下载频道:`{chat_id}`\n{callback_query.message.text}',
+                        text=f"下载频道:`{chat_id}`\n{callback_query.message.text}",
                         reply_markup=kb.single_button(
                             text=BotButton.TASK_ASSIGN,
-                            callback_data=BotCallbackText.NULL
-                        )
+                            callback_data=BotCallbackText.NULL,
+                        ),
                     )
-                    await self.download_chat(
-                        chat_id=chat_id
-                    )
+                    await self.download_chat(chat_id=chat_id)
                     _remove_chat_id(chat_id)
                 elif callback_data == BotCallbackText.DOWNLOAD_CHAT_ID_CANCEL:
                     _remove_chat_id(chat_id)
@@ -669,12 +1083,12 @@ class TelegramRestrictedMediaDownloader(Bot):
                         text=callback_query.message.text,
                         reply_markup=kb.single_button(
                             text=BotButton.TASK_CANCEL,
-                            callback_data=BotCallbackText.NULL
-                        )
+                            callback_data=BotCallbackText.NULL,
+                        ),
                     )
             elif callback_data in (
-                    BotCallbackText.DOWNLOAD_CHAT_FILTER,
-                    BotCallbackText.DOWNLOAD_CHAT_DATE_FILTER
+                BotCallbackText.DOWNLOAD_CHAT_FILTER,
+                BotCallbackText.DOWNLOAD_CHAT_DATE_FILTER,
             ):
                 if callback_data == BotCallbackText.DOWNLOAD_CHAT_DATE_FILTER:
                     start_time, end_time = _get_update_time()
@@ -683,141 +1097,176 @@ class TelegramRestrictedMediaDownloader(Bot):
                 # 返回或点击。
                 await callback_query.message.edit_text(
                     text=_filter_prompt(),
-                    reply_markup=kb.download_chat_filter_button() if callback_data == BotCallbackText.DOWNLOAD_CHAT_FILTER else kb.filter_date_range_button()
+                    reply_markup=kb.download_chat_filter_button()
+                    if callback_data == BotCallbackText.DOWNLOAD_CHAT_FILTER
+                    else kb.filter_date_range_button(),
                 )
-            elif callback_data in (BotCallbackText.FILTER_START_DATE, BotCallbackText.FILTER_END_DATE):
+            elif callback_data in (
+                BotCallbackText.FILTER_START_DATE,
+                BotCallbackText.FILTER_END_DATE,
+            ):
                 dtype = None
-                p_s_d = ''
+                p_s_d = ""
                 if callback_data == BotCallbackText.FILTER_START_DATE:
                     dtype = CalenderKeyboard.START_TIME_BUTTON
-                    p_s_d = '起始'
+                    p_s_d = "起始"
                 elif callback_data == BotCallbackText.FILTER_END_DATE:
                     dtype = CalenderKeyboard.END_TIME_BUTTON
-                    p_s_d = '结束'
+                    p_s_d = "结束"
                 await callback_query.message.edit_text(
-                    text=f'📅选择{p_s_d}日期:\n{_filter_prompt()}'
+                    text=f"📅选择{p_s_d}日期:\n{_filter_prompt()}"
                 )
                 await kb.calendar_keyboard(dtype=dtype)
-            elif callback_data.startswith('adjust_step_'):
+            elif callback_data.startswith("adjust_step_"):
                 # 获取当前步进值
-                parts = callback_data.split('_')
+                parts = callback_data.split("_")
                 dtype = parts[-2]
                 current_step = int(parts[-1])
                 step_sequence = [1, 2, 5, 10, 15, 20]
                 current_index = step_sequence.index(current_step)
                 next_index = (current_index + 1) % len(step_sequence)
                 new_step = step_sequence[next_index]
-                self.download_chat_filter[chat_id]['date_range']['adjust_step'] = new_step
+                self.download_chat_filter[chat_id]["date_range"]["adjust_step"] = (
+                    new_step
+                )
                 current_date = datetime.datetime.fromtimestamp(
-                    self.download_chat_filter[chat_id]['date_range'][f'{dtype}_date']
-                ).strftime('%Y-%m-%d %H:%M:%S')
+                    self.download_chat_filter[chat_id]["date_range"][f"{dtype}_date"]
+                ).strftime("%Y-%m-%d %H:%M:%S")
                 await callback_query.message.edit_reply_markup(
                     reply_markup=kb.time_keyboard(
-                        dtype=dtype,
-                        date=current_date,
-                        adjust_step=new_step
+                        dtype=dtype, date=current_date, adjust_step=new_step
                     )
                 )
-            elif callback_data.startswith(('time_inc_', 'time_dec_')):
-                parts = callback_data.split('_')
+            elif callback_data.startswith(("time_inc_", "time_dec_")):
+                parts = callback_data.split("_")
                 dtype = None
-                if 'start' in callback_data:
+                if "start" in callback_data:
                     dtype = CalenderKeyboard.START_TIME_BUTTON
-                elif 'end' in callback_data:
+                elif "end" in callback_data:
                     dtype = CalenderKeyboard.END_TIME_BUTTON
 
-                if 'month' in callback_data:
+                if "month" in callback_data:
                     year = int(parts[-2])
                     month = int(parts[-1])
                     await kb.calendar_keyboard(year=year, month=month, dtype=dtype)
-                    log.info(f'日期切换为{year}年,{month}月。')
+                    log.info(f"日期切换为{year}年,{month}月。")
 
-            elif callback_data.startswith(('set_time_', 'set_specific_time_')):
-                parts = callback_data.split('_')
+            elif callback_data.startswith(("set_time_", "set_specific_time_")):
+                parts = callback_data.split("_")
                 date = parts[-1]
                 dtype = parts[-2]
-                date_type = ''
-                p_s_d = ''
-                timestamp = datetime.datetime.timestamp(datetime.datetime.strptime(date, '%Y-%m-%d %H:%M:%S'))
-                if 'start' in callback_data:
-                    date_type = 'start_date'
-                    p_s_d = '起始'
-                elif 'end' in callback_data:
-                    date_type = 'end_date'
-                    p_s_d = '结束'
-                self.download_chat_filter[chat_id]['date_range'][date_type] = timestamp
+                date_type = ""
+                p_s_d = ""
+                timestamp = datetime.datetime.timestamp(
+                    datetime.datetime.strptime(date, "%Y-%m-%d %H:%M:%S")
+                )
+                if "start" in callback_data:
+                    date_type = "start_date"
+                    p_s_d = "起始"
+                elif "end" in callback_data:
+                    date_type = "end_date"
+                    p_s_d = "结束"
+                self.download_chat_filter[chat_id]["date_range"][date_type] = timestamp
                 await callback_query.message.edit_text(
-                    text=f'📅选择{p_s_d}日期:\n{_filter_prompt()}',
+                    text=f"📅选择{p_s_d}日期:\n{_filter_prompt()}",
                     reply_markup=kb.time_keyboard(
                         dtype=dtype,
                         date=date,
-                        adjust_step=self.download_chat_filter[chat_id]['date_range']['adjust_step']
-                    )
+                        adjust_step=self.download_chat_filter[chat_id]["date_range"][
+                            "adjust_step"
+                        ],
+                    ),
                 )
-                log.info(f'日期设置,起始日期:{_get_update_time()[0]},结束日期:{_get_update_time()[1]}。')
+                log.info(
+                    f"日期设置,起始日期:{_get_update_time()[0]},结束日期:{_get_update_time()[1]}。"
+                )
             elif callback_data in (
-                    BotCallbackText.DOWNLOAD_CHAT_DTYPE_FILTER,
-                    BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_VIDEO,
-                    BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_PHOTO,
-                    BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_AUDIO,
-                    BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_VOICE,
-                    BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_ANIMATION,
-                    BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_DOCUMENT
+                BotCallbackText.DOWNLOAD_CHAT_DTYPE_FILTER,
+                BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_VIDEO,
+                BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_PHOTO,
+                BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_AUDIO,
+                BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_VOICE,
+                BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_ANIMATION,
+                BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_DOCUMENT,
             ):
+
                 def _toggle_dtype_filter_button(_param: str):
-                    _dtype: dict = self.download_chat_filter[chat_id]['download_type']
+                    _dtype: dict = self.download_chat_filter[chat_id]["download_type"]
                     _status: bool = _dtype[_param]
                     if list(_dtype.values()).count(True) == 1 and _status:
                         raise ValueError
                     _dtype[_param] = not _status
-                    f_s = '禁用' if _status else '启用'
+                    f_s = "禁用" if _status else "启用"
                     f_p = f'已{f_s}"{_param}"类型用于/download_chat命令的下载。'
-                    log.info(
-                        f'{f_p}当前的/download_chat下载类型设置:{_dtype}')
+                    log.info(f"{f_p}当前的/download_chat下载类型设置:{_dtype}")
 
                 try:
-                    if callback_data == BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_VIDEO:
-                        _toggle_dtype_filter_button('video')
-                    elif callback_data == BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_PHOTO:
-                        _toggle_dtype_filter_button('photo')
-                    elif callback_data == BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_AUDIO:
-                        _toggle_dtype_filter_button('audio')
-                    elif callback_data == BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_VOICE:
-                        _toggle_dtype_filter_button('voice')
-                    elif callback_data == BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_ANIMATION:
-                        _toggle_dtype_filter_button('animation')
-                    elif callback_data == BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_DOCUMENT:
-                        _toggle_dtype_filter_button('document')
+                    if (
+                        callback_data
+                        == BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_VIDEO
+                    ):
+                        _toggle_dtype_filter_button("video")
+                    elif (
+                        callback_data
+                        == BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_PHOTO
+                    ):
+                        _toggle_dtype_filter_button("photo")
+                    elif (
+                        callback_data
+                        == BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_AUDIO
+                    ):
+                        _toggle_dtype_filter_button("audio")
+                    elif (
+                        callback_data
+                        == BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_VOICE
+                    ):
+                        _toggle_dtype_filter_button("voice")
+                    elif (
+                        callback_data
+                        == BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_ANIMATION
+                    ):
+                        _toggle_dtype_filter_button("animation")
+                    elif (
+                        callback_data
+                        == BotCallbackText.TOGGLE_DOWNLOAD_CHAT_DTYPE_DOCUMENT
+                    ):
+                        _toggle_dtype_filter_button("document")
                     await callback_query.message.edit_text(
                         text=_filter_prompt(),
-                        reply_markup=kb.toggle_download_chat_type_filter_button(self.download_chat_filter)
-
+                        reply_markup=kb.toggle_download_chat_type_filter_button(
+                            self.download_chat_filter
+                        ),
                     )
                 except ValueError:
-                    await callback_query.message.reply_text('⚠️⚠️⚠️至少需要选择一个下载类型⚠️⚠️⚠️')
+                    await callback_query.message.reply_text(
+                        "⚠️⚠️⚠️至少需要选择一个下载类型⚠️⚠️⚠️"
+                    )
                 except Exception as e:
                     await callback_query.message.reply_text(
-                        '下载类型设置失败\n(具体原因请前往终端查看报错信息)')
-                    log.error(f'下载类型设置失败,{_t(KeyWord.REASON)}:"{e}"', exc_info=True)
+                        "下载类型设置失败\n(具体原因请前往终端查看报错信息)"
+                    )
+                    log.error(
+                        f'下载类型设置失败,{_t(KeyWord.REASON)}:"{e}"', exc_info=True
+                    )
 
     async def forward(
-            self,
-            client: pyrogram.Client,
-            message: pyrogram.types.Message,
-            message_id: int,
-            origin_chat_id: int,
-            target_chat_id: int,
-            target_link: str,
-            download_upload: Optional[bool] = False,
-            media_group: Optional[list] = None
+        self,
+        client: pyrogram.Client,
+        message: pyrogram.types.Message,
+        message_id: int,
+        origin_chat_id: int,
+        target_chat_id: int,
+        target_link: str,
+        download_upload: Optional[bool] = False,
+        media_group: Optional[list] = None,
     ):
         try:
             if not self.check_type(message):
                 console.log(
                     f'{_t(KeyWord.CHANNEL)}:"{target_chat_id}",{_t(KeyWord.MESSAGE_ID)}:"{message_id}"'
-                    f' -> '
+                    f" -> "
                     f'{_t(KeyWord.CHANNEL)}:"{origin_chat_id}",'
-                    f'{_t(KeyWord.STATUS)}:{_t(KeyWord.FORWARD_SKIP)}。'
+                    f"{_t(KeyWord.STATUS)}:{_t(KeyWord.FORWARD_SKIP)}。"
                 )
                 return None
             if media_group:
@@ -825,7 +1274,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                     chat_id=target_chat_id,
                     from_chat_id=origin_chat_id,
                     message_id=message_id,
-                    disable_notification=True
+                    disable_notification=True,
                 )
             else:
                 await self.app.client.copy_message(
@@ -833,14 +1282,16 @@ class TelegramRestrictedMediaDownloader(Bot):
                     from_chat_id=origin_chat_id,
                     message_id=message_id,
                     disable_notification=True,
-                    protect_content=False
+                    protect_content=False,
                 )
-            p_message_id = ','.join(map(str, media_group)) if media_group else message_id
+            p_message_id = (
+                ",".join(map(str, media_group)) if media_group else message_id
+            )
             console.log(
                 f'{_t(KeyWord.CHANNEL)}:"{target_chat_id}",{_t(KeyWord.MESSAGE_ID)}:"{p_message_id}"'
-                f' -> '
+                f" -> "
                 f'{_t(KeyWord.CHANNEL)}:"{origin_chat_id}",'
-                f'{_t(KeyWord.STATUS)}:{_t(KeyWord.FORWARD_SUCCESS)}。'
+                f"{_t(KeyWord.STATUS)}:{_t(KeyWord.FORWARD_SUCCESS)}。"
             )
         except (ChatForwardsRestricted_400, ChatForwardsRestricted_406):
             if not download_upload:
@@ -849,68 +1300,74 @@ class TelegramRestrictedMediaDownloader(Bot):
             if not self.gc.download_upload:
                 await self.bot.send_message(
                     chat_id=client.me.id,
-                    text=f'⚠️⚠️⚠️无法转发⚠️⚠️⚠️\n'
-                         f'`{link}`\n'
-                         f'存在内容保护限制(可在[设置]->[上传设置]中设置转发时遇到受限转发进行下载后上传)。',
+                    text=f"⚠️⚠️⚠️无法转发⚠️⚠️⚠️\n"
+                    f"`{link}`\n"
+                    f"存在内容保护限制(可在[设置]->[上传设置]中设置转发时遇到受限转发进行下载后上传)。",
                     reply_parameters=ReplyParameters(message_id=message_id),
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
-                        BotButton.SETTING,
-                        callback_data=BotCallbackText.SETTING
-                    )]]))
+                    reply_markup=InlineKeyboardMarkup(
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    BotButton.SETTING,
+                                    callback_data=BotCallbackText.SETTING,
+                                )
+                            ]
+                        ]
+                    ),
+                )
                 return None
-            self.last_message.text = f'/download {link}?single'
+            self.last_message.text = f"/download {link}?single"
             await self.get_download_link_from_bot(
                 client=self.last_client,
                 message=self.last_message,
                 with_upload={
-                    'link': target_link,
-                    'file_name': None,
-                    'with_delete': self.gc.upload_delete
-                }
+                    "link": target_link,
+                    "file_name": None,
+                    "with_delete": self.gc.upload_delete,
+                },
             )
             p = f'{_t(KeyWord.DOWNLOAD_AND_UPLOAD_TASK)}{_t(KeyWord.CHANNEL)}:"{target_chat_id}",{_t(KeyWord.LINK)}:"{link}"。'
-            console.log(p, style='#FF4689')
+            console.log(p, style="#FF4689")
             log.info(p)
 
     async def get_forward_link_from_bot(
-            self, client: pyrogram.Client,
-            message: pyrogram.types.Message
+        self, client: pyrogram.Client, message: pyrogram.types.Message
     ) -> Union[dict, None]:
-        meta: Union[dict, None] = await super().get_forward_link_from_bot(client, message)
+        meta: Union[dict, None] = await super().get_forward_link_from_bot(
+            client, message
+        )
         if meta is None:
             return None
         self.last_client: pyrogram.Client = client
         self.last_message: pyrogram.types.Message = message
-        origin_link: str = meta.get('origin_link')
-        target_link: str = meta.get('target_link')
-        start_id: int = meta.get('message_range')[0]
-        end_id: int = meta.get('message_range')[1]
+        origin_link: str = meta.get("origin_link")
+        target_link: str = meta.get("target_link")
+        start_id: int = meta.get("message_range")[0]
+        end_id: int = meta.get("message_range")[1]
         last_message: Union[pyrogram.types.Message, None] = None
-        loading = '🚛消息转发中,请稍候...'
+        loading = "🚛消息转发中,请稍候..."
         try:
             origin_meta: Union[dict, None] = await parse_link(
-                client=self.app.client,
-                link=origin_link
+                client=self.app.client, link=origin_link
             )
             target_meta: Union[dict, None] = await parse_link(
-                client=self.app.client,
-                link=target_link
+                client=self.app.client, link=target_link
             )
             if not all([origin_meta, target_meta]):
-                raise Exception('Invalid origin_link or target_link.')
+                raise Exception("Invalid origin_link or target_link.")
             origin_chat: Union[pyrogram.types.Chat, None] = await get_chat_with_notify(
                 user_client=self.app.client,
                 bot_client=client,
                 bot_message=message,
-                chat_id=origin_meta.get('chat_id'),
-                error_msg=f'⬇️⬇️⬇️原始频道不存在⬇️⬇️⬇️\n{origin_link}'
+                chat_id=origin_meta.get("chat_id"),
+                error_msg=f"⬇️⬇️⬇️原始频道不存在⬇️⬇️⬇️\n{origin_link}",
             )
             target_chat: Union[pyrogram.types.Chat, None] = await get_chat_with_notify(
                 user_client=self.app.client,
                 bot_client=client,
                 bot_message=message,
-                chat_id=target_meta.get('chat_id'),
-                error_msg=f'⬇️⬇️⬇️目标频道不存在⬇️⬇️⬇️\n{target_link}'
+                chat_id=target_meta.get("chat_id"),
+                error_msg=f"⬇️⬇️⬇️目标频道不存在⬇️⬇️⬇️\n{target_link}",
             )
             if not all([origin_chat, target_chat]):
                 return None
@@ -918,7 +1375,7 @@ class TelegramRestrictedMediaDownloader(Bot):
             if target_chat.id == me.id:
                 await client.send_message(
                     chat_id=message.from_user.id,
-                    text='⚠️⚠️⚠️无法转发到此机器人⚠️⚠️⚠️',
+                    text="⚠️⚠️⚠️无法转发到此机器人⚠️⚠️⚠️",
                     reply_parameters=ReplyParameters(message_id=message.id),
                 )
                 return None
@@ -929,13 +1386,10 @@ class TelegramRestrictedMediaDownloader(Bot):
                 chat_id=message.from_user.id,
                 reply_parameters=ReplyParameters(message_id=message.id),
                 link_preview_options=LINK_PREVIEW_OPTIONS,
-                text=loading
+                text=loading,
             )
             async for i in self.app.client.get_chat_history(
-                    chat_id=origin_chat.id,
-                    offset_id=start_id,
-                    max_id=end_id,
-                    reverse=True
+                chat_id=origin_chat.id, offset_id=start_id, max_id=end_id, reverse=True
             ):
                 try:
                     message_id = i.id
@@ -945,43 +1399,46 @@ class TelegramRestrictedMediaDownloader(Bot):
                         message_id=message_id,
                         origin_chat_id=origin_chat_id,
                         target_chat_id=target_chat_id,
-                        target_link=target_link
+                        target_link=target_link,
                     )
                     record_id.append(message_id)
                 except (ChatForwardsRestricted_400, ChatForwardsRestricted_406):
                     self.cd.data = {
-                        'origin_link': origin_link,
-                        'target_link': target_link,
-                        'start_id': start_id,
-                        'end_id': end_id
+                        "origin_link": origin_link,
+                        "target_link": target_link,
+                        "start_id": start_id,
+                        "end_id": end_id,
                     }
-                    channel = '@' + origin_chat.username if isinstance(
-                        getattr(origin_chat, 'username'),
-                        str) else ''
+                    channel = (
+                        "@" + origin_chat.username
+                        if isinstance(getattr(origin_chat, "username"), str)
+                        else ""
+                    )
                     await client.send_message(
                         chat_id=message.from_user.id,
-                        text=f'⚠️⚠️⚠️无法转发⚠️⚠️⚠️\n`{origin_link}`\n{channel}存在内容保护限制。',
+                        text=f"⚠️⚠️⚠️无法转发⚠️⚠️⚠️\n`{origin_link}`\n{channel}存在内容保护限制。",
                         parse_mode=ParseMode.MARKDOWN,
                         reply_parameters=ReplyParameters(message_id=message.id),
-                        reply_markup=KeyboardButton.restrict_forward_button()
+                        reply_markup=KeyboardButton.restrict_forward_button(),
                     )
                     return None
                 except Exception as e:
                     log.warning(
                         f'{_t(KeyWord.CHANNEL)}:"{origin_chat_id}",{_t(KeyWord.MESSAGE_ID)}:"{i.id}"'
-                        f' -> '
+                        f" -> "
                         f'{_t(KeyWord.CHANNEL)}:"{target_chat_id}",'
-                        f'{_t(KeyWord.STATUS)}:{_t(KeyWord.FORWARD_FAILURE)},'
-                        f'{_t(KeyWord.REASON)}:"{e}"')
+                        f"{_t(KeyWord.STATUS)}:{_t(KeyWord.FORWARD_FAILURE)},"
+                        f'{_t(KeyWord.REASON)}:"{e}"'
+                    )
             else:
                 if isinstance(last_message, str):
-                    log.warning('消息过长编辑频繁,暂时无法通过机器人显示通知。')
+                    log.warning("消息过长编辑频繁,暂时无法通过机器人显示通知。")
                 if not record_id:
                     last_message = await self.safe_edit_message(
                         client=client,
                         message=message,
                         last_message_id=last_message.id,
-                        text=safe_message(f'😅😅😅没有找到任何有效的消息😅😅😅')
+                        text=safe_message(f"😅😅😅没有找到任何有效的消息😅😅😅"),
                     )
                     return None
                 invalid_id: list = []
@@ -993,112 +1450,113 @@ class TelegramRestrictedMediaDownloader(Bot):
                         client=client,
                         message=message,
                         last_message_id=last_message.id,
-                        text=safe_message(BotMessage.INVALID)
+                        text=safe_message(BotMessage.INVALID),
                     )
                     for i in invalid_id:
-                        last_message: Union[pyrogram.types.Message, str, None] = await self.safe_edit_message(
+                        last_message: Union[
+                            pyrogram.types.Message, str, None
+                        ] = await self.safe_edit_message(
                             client=client,
                             message=message,
                             last_message_id=last_message.id,
                             text=safe_message(
-                                f'{last_message.text}\n{format_chat_link(origin_link, topic=origin_chat.is_forum)}/{i}'
-                            )
+                                f"{last_message.text}\n{format_chat_link(origin_link, topic=origin_chat.is_forum)}/{i}"
+                            ),
                         )
                 last_message = await self.safe_edit_message(
                     client=client,
                     message=message,
                     last_message_id=last_message.id,
                     text=safe_message(
-                        f'{last_message.text.strip(loading)}\n🌟🌟🌟转发任务已完成🌟🌟🌟\n(若设置了转发过滤规则,请前往终端查看转发记录,此处不做展示)'),
+                        f"{last_message.text.strip(loading)}\n🌟🌟🌟转发任务已完成🌟🌟🌟\n(若设置了转发过滤规则,请前往终端查看转发记录,此处不做展示)"
+                    ),
                     reply_markup=InlineKeyboardMarkup(
                         [
                             [
                                 InlineKeyboardButton(
                                     BotButton.CLICK_VIEW,
-                                    url=format_chat_link(target_link, topic=target_chat.is_forum)
+                                    url=format_chat_link(
+                                        target_link, topic=target_chat.is_forum
+                                    ),
                                 )
                             ]
                         ]
-                    )
+                    ),
                 )
         except AttributeError as e:
             log.exception(f'转发时遇到错误,{_t(KeyWord.REASON)}:"{e}"')
             await client.send_message(
                 chat_id=message.from_user.id,
                 reply_parameters=ReplyParameters(message_id=message.id),
-                text='⬇️⬇️⬇️出错了⬇️⬇️⬇️\n(具体原因请前往终端查看报错信息)'
+                text="⬇️⬇️⬇️出错了⬇️⬇️⬇️\n(具体原因请前往终端查看报错信息)",
             )
         except (ValueError, KeyError, UsernameInvalid, ChatWriteForbidden):
-            msg: str = ''
-            if any('/c' in link for link in (origin_link, target_link)):
-                msg = '(私密频道或话题频道必须让当前账号加入转发频道,并且目标频道需有上传文件的权限)'
+            msg: str = ""
+            if any("/c" in link for link in (origin_link, target_link)):
+                msg = "(私密频道或话题频道必须让当前账号加入转发频道,并且目标频道需有上传文件的权限)"
             await client.send_message(
                 chat_id=message.from_user.id,
                 reply_parameters=ReplyParameters(message_id=message.id),
-                text='❌❌❌没有找到有效链接❌❌❌\n' + msg
+                text="❌❌❌没有找到有效链接❌❌❌\n" + msg,
             )
         except Exception as e:
             log.exception(f'转发时遇到错误,{_t(KeyWord.REASON)}:"{e}"')
             await client.send_message(
                 chat_id=message.from_user.id,
                 reply_parameters=ReplyParameters(message_id=message.id),
-                text='⬇️⬇️⬇️出错了⬇️⬇️⬇️\n(具体原因请前往终端查看报错信息)'
+                text="⬇️⬇️⬇️出错了⬇️⬇️⬇️\n(具体原因请前往终端查看报错信息)",
             )
         finally:
             if last_message and last_message.text == loading:
                 await last_message.delete()
 
     async def cancel_listen(
-            self,
-            client: pyrogram.Client,
-            message: pyrogram.types,
-            link: str,
-            command: str
+        self, client: pyrogram.Client, message: pyrogram.types, link: str, command: str
     ):
-        if command == '/listen_forward':
-            self.cd.data = {
-                'link': link
-            }
+        if command == "/listen_forward":
+            self.cd.data = {"link": link}
         args: list = link.split()
-        forward_emoji = ' ➡️ '
+        forward_emoji = " ➡️ "
         await client.send_message(
             chat_id=message.from_user.id,
             reply_parameters=ReplyParameters(message_id=message.id),
-            text=f'`{link if len(args) == 1 else forward_emoji.join(args)}`\n⚠️⚠️⚠️已经在监听列表中⚠️⚠️⚠️\n请选择是否移除',
+            text=f"`{link if len(args) == 1 else forward_emoji.join(args)}`\n⚠️⚠️⚠️已经在监听列表中⚠️⚠️⚠️\n请选择是否移除",
             link_preview_options=LINK_PREVIEW_OPTIONS,
-            reply_markup=InlineKeyboardMarkup([
+            reply_markup=InlineKeyboardMarkup(
                 [
-                    InlineKeyboardButton(
-                        BotButton.OK,
-                        callback_data=f'{BotCallbackText.REMOVE_LISTEN_DOWNLOAD} {link}' if command == '/listen_download' else BotCallbackText.REMOVE_LISTEN_FORWARD
-                    ),
-                    InlineKeyboardButton(
-                        BotButton.CANCEL,
-                        callback_data=BotCallbackText.NULL
-                    )
+                    [
+                        InlineKeyboardButton(
+                            BotButton.OK,
+                            callback_data=f"{BotCallbackText.REMOVE_LISTEN_DOWNLOAD} {link}"
+                            if command == "/listen_download"
+                            else BotCallbackText.REMOVE_LISTEN_FORWARD,
+                        ),
+                        InlineKeyboardButton(
+                            BotButton.CANCEL, callback_data=BotCallbackText.NULL
+                        ),
+                    ]
                 ]
-            ]
-            )
+            ),
         )
 
-    async def on_listen(
-            self,
-            client: pyrogram.Client,
-            message: pyrogram.types.Message
-    ):
+    async def on_listen(self, client: pyrogram.Client, message: pyrogram.types.Message):
         meta: Union[dict, None] = await super().on_listen(client, message)
         if meta is None:
             return None
 
-        tag: Union[str, None] = meta.get('tag')
+        tag: Union[str, None] = meta.get("tag")
 
-        async def add_listen_chat(_link: str, _listen_chat: dict, _callback: callable) -> bool:
+        async def add_listen_chat(
+            _link: str, _listen_chat: dict, _callback: callable
+        ) -> bool:
             if _link not in _listen_chat:
                 try:
                     chat = await self.user.get_chat(_link)
                     if chat.is_forum:
                         raise PeerIdInvalid
-                    handler = MessageHandler(_callback, filters=pyrogram.filters.chat(chat.id))
+                    handler = MessageHandler(
+                        _callback, filters=pyrogram.filters.chat(chat.id)
+                    )
                     _listen_chat[_link] = handler
                     self.user.add_handler(handler)
                     # 记录监听频道的标签
@@ -1112,22 +1570,22 @@ class TelegramRestrictedMediaDownloader(Bot):
                     try:
                         link_meta: list = _link.split()
                         link_length: int = len(link_meta)
-                        if link_length >= 1:  # v1.6.7 修复内部函数add_listen_chat中,抛出PeerIdInvalid后,在获取链接时抛出ValueError错误。
+                        if (
+                            link_length >= 1
+                        ):  # v1.6.7 修复内部函数add_listen_chat中,抛出PeerIdInvalid后,在获取链接时抛出ValueError错误。
                             l_link = link_meta[0]
                         else:
                             return False
                         m: dict = await parse_link(client=self.app.client, link=l_link)
-                        topic_id = m.get('topic_id')
-                        chat_id = m.get('chat_id')
+                        topic_id = m.get("topic_id")
+                        chat_id = m.get("chat_id")
                         if topic_id:
                             filters = pyrogram.filters.chat(
-                                chat_id) & pyrogram.filters.topic(topic_id)
+                                chat_id
+                            ) & pyrogram.filters.topic(topic_id)
                         else:
                             filters = pyrogram.filters.chat(chat_id)
-                        handler = MessageHandler(
-                            _callback,
-                            filters=filters
-                        )
+                        handler = MessageHandler(_callback, filters=filters)
                         _listen_chat[_link] = handler
                         self.user.add_handler(handler)
                         # 记录监听频道的标签
@@ -1142,7 +1600,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                             chat_id=message.from_user.id,
                             reply_parameters=ReplyParameters(message_id=message.id),
                             link_preview_options=LINK_PREVIEW_OPTIONS,
-                            text=f'⚠️⚠️⚠️无法读取⚠️⚠️⚠️\n`{_link}`\n(具体原因请前往终端查看报错信息)'
+                            text=f"⚠️⚠️⚠️无法读取⚠️⚠️⚠️\n`{_link}`\n(具体原因请前往终端查看报错信息)",
                         )
                         log.error(f'频道"{_link}"解析失败,{_t(KeyWord.REASON)}:"{e}"')
                         return False
@@ -1151,7 +1609,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                         chat_id=message.from_user.id,
                         reply_parameters=ReplyParameters(message_id=message.id),
                         link_preview_options=LINK_PREVIEW_OPTIONS,
-                        text=f'⚠️⚠️⚠️无法读取⚠️⚠️⚠️\n`{_link}`\n(具体原因请前往终端查看报错信息)'
+                        text=f"⚠️⚠️⚠️无法读取⚠️⚠️⚠️\n`{_link}`\n(具体原因请前往终端查看报错信息)",
                     )
                     log.error(f'读取频道"{_link}"时遇到错误,{_t(KeyWord.REASON)}:"{e}"')
                     return False
@@ -1159,73 +1617,86 @@ class TelegramRestrictedMediaDownloader(Bot):
                 await self.cancel_listen(client, message, _link, command)
                 return False
 
-        links: list = meta.get('links')
-        command: str = meta.get('command')
-        if command == '/listen_download':
+        links: list = meta.get("links")
+        command: str = meta.get("command")
+        if command == "/listen_download":
             last_message: Union[pyrogram.types.Message, None] = None
             for link in links:
-                if await add_listen_chat(link, self.listen_download_chat, self.listen_download):
+                if await add_listen_chat(
+                    link, self.listen_download_chat, self.listen_download
+                ):
                     if not last_message:
-                        last_message: Union[pyrogram.types.Message, str, None] = await client.send_message(
+                        last_message: Union[
+                            pyrogram.types.Message, str, None
+                        ] = await client.send_message(
                             chat_id=message.from_user.id,
                             reply_parameters=ReplyParameters(message_id=message.id),
                             link_preview_options=LINK_PREVIEW_OPTIONS,
-                            text=f'✅新增`监听下载频道`频道:\n')
-                    last_message: Union[pyrogram.types.Message, str, None] = await self.safe_edit_message(
+                            text=f"✅新增`监听下载频道`频道:\n",
+                        )
+                    last_message: Union[
+                        pyrogram.types.Message, str, None
+                    ] = await self.safe_edit_message(
                         client=client,
                         message=message,
                         last_message_id=last_message.id,
-                        text=safe_message(f'{last_message.text}\n{link}'),
-                        reply_markup=InlineKeyboardMarkup([[
-                            InlineKeyboardButton(
-                                BotButton.LOOKUP_LISTEN_INFO,
-                                callback_data=BotCallbackText.LOOKUP_LISTEN_INFO
-                            )
-                        ]])
+                        text=safe_message(f"{last_message.text}\n{link}"),
+                        reply_markup=InlineKeyboardMarkup(
+                            [
+                                [
+                                    InlineKeyboardButton(
+                                        BotButton.LOOKUP_LISTEN_INFO,
+                                        callback_data=BotCallbackText.LOOKUP_LISTEN_INFO,
+                                    )
+                                ]
+                            ]
+                        ),
                     )
                     p = f'已新增监听下载,频道链接:"{link}"。'
-                    console.log(p, style='#FF4689')
-                    log.info(f'{p}当前的监听下载信息:{self.listen_download_chat}')
-        elif command == '/listen_forward':
+                    console.log(p, style="#FF4689")
+                    log.info(f"{p}当前的监听下载信息:{self.listen_download_chat}")
+        elif command == "/listen_forward":
             listen_link, target_link = links
-            if await add_listen_chat(f'{listen_link} {target_link}', self.listen_forward_chat, self.listen_forward):
+            if await add_listen_chat(
+                f"{listen_link} {target_link}",
+                self.listen_forward_chat,
+                self.listen_forward,
+            ):
                 await client.send_message(
                     chat_id=message.from_user.id,
                     reply_parameters=ReplyParameters(message_id=message.id),
                     link_preview_options=LINK_PREVIEW_OPTIONS,
-                    text=f'✅新增`监听转发`频道:\n{listen_link} ➡️ {target_link}',
+                    text=f"✅新增`监听转发`频道:\n{listen_link} ➡️ {target_link}",
                     reply_markup=InlineKeyboardMarkup(
                         [
                             [
                                 InlineKeyboardButton(
                                     BotButton.LOOKUP_LISTEN_INFO,
-                                    callback_data=BotCallbackText.LOOKUP_LISTEN_INFO
+                                    callback_data=BotCallbackText.LOOKUP_LISTEN_INFO,
                                 )
                             ]
                         ]
-                    )
+                    ),
                 )
                 p = f'已新增监听转发,转发规则:"{listen_link} -> {target_link}"。'
-                console.log(p, style='#FF4689')
-                log.info(f'{p}当前的监听转发信息:{self.listen_forward_chat}')
+                console.log(p, style="#FF4689")
+                log.info(f"{p}当前的监听转发信息:{self.listen_forward_chat}")
 
     async def listen_download(
-            self,
-            client: pyrogram.Client,
-            message: pyrogram.types.Message
+        self, client: pyrogram.Client, message: pyrogram.types.Message
     ):
         try:
             # 若该监听频道设置了标签, 为当前消息链接记录标签
             try:
-                _chat_id = getattr(getattr(message, 'chat', None), 'id', None)
+                _chat_id = getattr(getattr(message, "chat", None), "id", None)
                 _tag = self.listen_download_tag_by_chatid.get(_chat_id)
-                if _tag and getattr(message, 'link', None):
+                if _tag and getattr(message, "link", None):
                     self.link_tag_map[message.link] = _tag
             except Exception:
                 pass
             await self.create_download_task(message_ids=message.link, single_link=True)
         except Exception as e:
-            log.exception(f'监听下载出现错误,{_t(KeyWord.REASON)}:{e}')
+            log.exception(f"监听下载出现错误,{_t(KeyWord.REASON)}:{e}")
 
     def check_type(self, message: pyrogram.types.Message):
         for dtype, is_forward in self.gc.forward_type.items():
@@ -1236,61 +1707,73 @@ class TelegramRestrictedMediaDownloader(Bot):
         return False
 
     async def listen_forward(
-            self,
-            client: pyrogram.Client,
-            message: pyrogram.types.Message
+        self, client: pyrogram.Client, message: pyrogram.types.Message
     ):
         try:
             link: str = message.link
             meta = await parse_link(client=self.app.client, link=link)
-            listen_chat_id = meta.get('chat_id')
+            listen_chat_id = meta.get("chat_id")
             for m in self.listen_forward_chat:
                 listen_link, target_link = m.split()
                 _listen_link_meta = await parse_link(
-                    client=self.app.client,
-                    link=listen_link
+                    client=self.app.client, link=listen_link
                 )
                 _target_link_meta = await parse_link(
-                    client=self.app.client,
-                    link=target_link
+                    client=self.app.client, link=target_link
                 )
-                _listen_chat_id = _listen_link_meta.get('chat_id')
-                _target_chat_id = _target_link_meta.get('chat_id')
+                _listen_chat_id = _listen_link_meta.get("chat_id")
+                _target_chat_id = _target_link_meta.get("chat_id")
                 if listen_chat_id == _listen_chat_id:
                     try:
                         media_group_ids = await message.get_media_group()
                         if not media_group_ids:
                             raise ValueError
-                        if (
-                                not self.gc.forward_type.get('video') or
-                                not self.gc.forward_type.get('photo')
-                        ):
-                            log.warning('由于过滤了图片或视频类型的转发,将不再以媒体组方式发送。')
+                        if not self.gc.forward_type.get(
+                            "video"
+                        ) or not self.gc.forward_type.get("photo"):
+                            log.warning(
+                                "由于过滤了图片或视频类型的转发,将不再以媒体组方式发送。"
+                            )
                             raise ValueError
                         if (
-                                getattr(getattr(message, 'chat', None), 'is_creator', False) or
-                                getattr(getattr(message, 'chat', None), 'is_admin', False)
+                            getattr(getattr(message, "chat", None), "is_creator", False)
+                            or getattr(
+                                getattr(message, "chat", None), "is_admin", False
+                            )
                         ) and (
-                                getattr(getattr(message, 'from_user', None), 'id', -1) ==
-                                getattr(getattr(client, 'me', None), 'id', None)
+                            getattr(getattr(message, "from_user", None), "id", -1)
+                            == getattr(getattr(client, "me", None), "id", None)
                         ):
                             pass
                         elif (
-                                getattr(getattr(message, 'chat', None), 'has_protected_content', False) or
-                                getattr(getattr(message, 'sender_chat', None), 'has_protected_content', False) or
-                                getattr(message, 'has_protected_content', False)
+                            getattr(
+                                getattr(message, "chat", None),
+                                "has_protected_content",
+                                False,
+                            )
+                            or getattr(
+                                getattr(message, "sender_chat", None),
+                                "has_protected_content",
+                                False,
+                            )
+                            or getattr(message, "has_protected_content", False)
                         ):
                             raise ValueError
                         if not self.handle_media_groups.get(listen_chat_id):
                             self.handle_media_groups[listen_chat_id] = set()
-                        if listen_chat_id in self.handle_media_groups and message.id not in self.handle_media_groups.get(
-                                listen_chat_id):
+                        if (
+                            listen_chat_id in self.handle_media_groups
+                            and message.id
+                            not in self.handle_media_groups.get(listen_chat_id)
+                        ):
                             ids: set = set()
                             for peer_message in media_group_ids:
                                 peer_id = peer_message.id
                                 ids.add(peer_id)
                             if ids:
-                                old_ids: Union[None, set] = self.handle_media_groups.get(listen_chat_id)
+                                old_ids: Union[None, set] = (
+                                    self.handle_media_groups.get(listen_chat_id)
+                                )
                                 if old_ids and isinstance(old_ids, set):
                                     old_ids.update(ids)
                                     self.handle_media_groups[listen_chat_id] = old_ids
@@ -1304,7 +1787,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                                 target_chat_id=_target_chat_id,
                                 target_link=target_link,
                                 download_upload=False,
-                                media_group=sorted(ids)
+                                media_group=sorted(ids),
                             )
                             break
                         break
@@ -1317,132 +1800,177 @@ class TelegramRestrictedMediaDownloader(Bot):
                         origin_chat_id=_listen_chat_id,
                         target_chat_id=_target_chat_id,
                         target_link=target_link,
-                        download_upload=True
+                        download_upload=True,
                     )
         except (ValueError, KeyError, UsernameInvalid, ChatWriteForbidden) as e:
             log.error(
-                f'监听转发出现错误,{_t(KeyWord.REASON)}:{e}频道性质可能发生改变,包括但不限于(频道解散、频道名改变、频道类型改变、该账户没有在目标频道上传的权限、该账号被当前频道移除)。')
+                f"监听转发出现错误,{_t(KeyWord.REASON)}:{e}频道性质可能发生改变,包括但不限于(频道解散、频道名改变、频道类型改变、该账户没有在目标频道上传的权限、该账号被当前频道移除)。"
+            )
         except Exception as e:
-            log.exception(f'监听转发出现错误,{_t(KeyWord.REASON)}:{e}')
+            log.exception(f"监听转发出现错误,{_t(KeyWord.REASON)}:{e}")
 
     async def resume_download(
-            self,
-            message: Union[pyrogram.types.Message, str],
-            file_name: str,
-            progress: Callable = None,
-            progress_args: tuple = (),
-            chunk_size: int = 1024 * 1024,
-            compare_size: Union[int, None] = None  # 不为None时,将通过大小比对判断是否为完整文件。
+        self,
+        message: Union[pyrogram.types.Message, str],
+        file_name: str,
+        progress: Callable = None,
+        progress_args: tuple = (),
+        chunk_size: int = 1024 * 1024,
+        compare_size: Union[
+            int, None
+        ] = None,  # 不为None时,将通过大小比对判断是否为完整文件。
     ) -> str:
-        temp_path = f'{file_name}.temp'
+        temp_path = f"{file_name}.temp"
         if os.path.exists(file_name) and compare_size:
             local_file_size: int = get_file_size(file_path=file_name)
             if compare_file_size(a_size=local_file_size, b_size=compare_size):
                 console.log(
-                    f'{_t(KeyWord.DOWNLOAD_TASK)}'
+                    f"{_t(KeyWord.DOWNLOAD_TASK)}"
                     f'{_t(KeyWord.RESUME)}:"{file_name}",'
-                    f'{_t(KeyWord.STATUS)}:{_t(KeyWord.ALREADY_EXIST)}')
+                    f"{_t(KeyWord.STATUS)}:{_t(KeyWord.ALREADY_EXIST)}"
+                )
                 return file_name
             else:
-                result: str = safe_replace(origin_file=file_name, overwrite_file=temp_path).get('e_code')
+                result: str = safe_replace(
+                    origin_file=file_name, overwrite_file=temp_path
+                ).get("e_code")
                 log.warning(result) if result is not None else None
                 log.warning(
                     f'不完整的文件"{file_name}",'
-                    f'更改文件名作为缓存:[{file_name}]({get_file_size(file_name)}) -> [{temp_path}]({compare_size})。')
+                    f"更改文件名作为缓存:[{file_name}]({get_file_size(file_name)}) -> [{temp_path}]({compare_size})。"
+                )
         if os.path.exists(temp_path) and compare_size:
             local_file_size: int = get_file_size(file_path=temp_path)
             if compare_file_size(a_size=local_file_size, b_size=compare_size):
                 console.log(
-                    f'{_t(KeyWord.DOWNLOAD_TASK)}'
+                    f"{_t(KeyWord.DOWNLOAD_TASK)}"
                     f'{_t(KeyWord.RESUME)}:"{temp_path}",'
-                    f'{_t(KeyWord.STATUS)}:{_t(KeyWord.ALREADY_EXIST)}')
-                result: str = safe_replace(origin_file=temp_path, overwrite_file=file_name).get('e_code')
+                    f"{_t(KeyWord.STATUS)}:{_t(KeyWord.ALREADY_EXIST)}"
+                )
+                result: str = safe_replace(
+                    origin_file=temp_path, overwrite_file=file_name
+                ).get("e_code")
                 log.warning(result) if result is not None else None
                 return file_name
             elif local_file_size > compare_size:
                 safe_delete(temp_path)
                 log.warning(
                     f'错误的缓存文件"{temp_path}",'
-                    f'已清除({_t(KeyWord.ERROR_SIZE)}:{local_file_size} > {_t(KeyWord.ACTUAL_SIZE)}:{compare_size})。')
-        downloaded = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0  # 获取已下载的字节数。
+                    f"已清除({_t(KeyWord.ERROR_SIZE)}:{local_file_size} > {_t(KeyWord.ACTUAL_SIZE)}:{compare_size})。"
+                )
+        downloaded = (
+            os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
+        )  # 获取已下载的字节数。
         if downloaded == 0:
-            mode = 'wb'
+            mode = "wb"
         else:
-            mode = 'ab'
+            mode = "ab"
             console.log(
-                f'{_t(KeyWord.DOWNLOAD_TASK)}'
+                f"{_t(KeyWord.DOWNLOAD_TASK)}"
                 f'{_t(KeyWord.RESUME)}:"{file_name}",'
-                f'{_t(KeyWord.ERROR_SIZE)}:{MetaData.suitable_units_display(downloaded)}。')
+                f"{_t(KeyWord.ERROR_SIZE)}:{MetaData.suitable_units_display(downloaded)}。"
+            )
         with open(file=temp_path, mode=mode) as f:
             skip_chunks: int = downloaded // chunk_size  # 计算要跳过的块数。
-            async for chunk in self.app.client.stream_media(message=message, offset=skip_chunks):
+            async for chunk in self.app.client.stream_media(
+                message=message, offset=skip_chunks
+            ):
                 f.write(chunk)
                 downloaded += len(chunk)
                 progress(downloaded, *progress_args)
-        if compare_size is None or compare_file_size(a_size=downloaded, b_size=compare_size):
-            result: str = safe_replace(origin_file=temp_path, overwrite_file=file_name).get('e_code')
+        if compare_size is None or compare_file_size(
+            a_size=downloaded, b_size=compare_size
+        ):
+            result: str = safe_replace(
+                origin_file=temp_path, overwrite_file=file_name
+            ).get("e_code")
             log.warning(result) if result is not None else None
             log.info(
-                f'"{temp_path}"下载完成,更改文件名:[{temp_path}]({get_file_size(temp_path)}) -> [{file_name}]({compare_size})')
+                f'"{temp_path}"下载完成,更改文件名:[{temp_path}]({get_file_size(temp_path)}) -> [{file_name}]({compare_size})'
+            )
         return file_name
 
-    def get_media_meta(self, message: pyrogram.types.Message, dtype) -> Dict[str, Union[int, str]]:
+    def get_media_meta(
+        self, message: pyrogram.types.Message, dtype
+    ) -> Dict[str, Union[int, str]]:
         """获取媒体元数据。"""
-        file_id: int = getattr(message, 'id')
+        file_id: int = getattr(message, "id")
         temp_file_path: str = self.app.get_temp_file_path(message, dtype)
         _sever_meta = getattr(message, dtype)
-        sever_file_size: int = getattr(_sever_meta, 'file_size')
-        file_name: str = split_path(temp_file_path).get('file_name')
+        sever_file_size: int = getattr(_sever_meta, "file_size")
+        file_name: str = split_path(temp_file_path).get("file_name")
         save_directory: str = os.path.join(self.env_save_directory(message), file_name)
         format_file_size: str = MetaData.suitable_units_display(sever_file_size)
         return {
-            'file_id': file_id,
-            'temp_file_path': temp_file_path,
-            'sever_file_size': sever_file_size,
-            'file_name': file_name,
-            'save_directory': save_directory,
-            'format_file_size': format_file_size
+            "file_id": file_id,
+            "temp_file_path": temp_file_path,
+            "sever_file_size": sever_file_size,
+            "file_name": file_name,
+            "save_directory": save_directory,
+            "format_file_size": format_file_size,
         }
 
     async def __add_task(
-            self,
-            chat_id: Union[str, int],
-            link_type: str,
-            link: str,
-            message: Union[pyrogram.types.Message, list],
-            retry: dict,
-            with_upload: Union[dict, None] = None,
-            diy_download_type: Optional[list] = None
+        self,
+        chat_id: Union[str, int],
+        link_type: str,
+        link: str,
+        message: Union[pyrogram.types.Message, list],
+        retry: dict,
+        with_upload: Union[dict, None] = None,
+        diy_download_type: Optional[list] = None,
     ) -> None:
-        retry_count = retry.get('count')
-        retry_id = retry.get('id')
+        retry_count = retry.get("count")
+        retry_id = retry.get("id")
         if isinstance(message, list):
             for _message in message:
                 if retry_count != 0:
                     if _message.id == retry_id:
-                        await self.__add_task(chat_id, link_type, link, _message, retry, with_upload, diy_download_type)
+                        await self.__add_task(
+                            chat_id,
+                            link_type,
+                            link,
+                            _message,
+                            retry,
+                            with_upload,
+                            diy_download_type,
+                        )
                         break
                 else:
-                    await self.__add_task(chat_id, link_type, link, _message, retry, with_upload, diy_download_type)
+                    await self.__add_task(
+                        chat_id,
+                        link_type,
+                        link,
+                        _message,
+                        retry,
+                        with_upload,
+                        diy_download_type,
+                    )
         else:
             _task = None
-            valid_dtype: str = next((_ for _ in DownloadType() if getattr(message, _, None)), None)  # 判断该链接是否为有支持的类型。
-            download_type: list = diy_download_type if diy_download_type else self.app.download_type
+            valid_dtype: str = next(
+                (_ for _ in DownloadType() if getattr(message, _, None)), None
+            )  # 判断该链接是否为有支持的类型。
+            download_type: list = (
+                diy_download_type if diy_download_type else self.app.download_type
+            )
             if valid_dtype in download_type:
                 # 如果是匹配到的消息类型就创建任务。
                 console.log(
-                    f'{_t(KeyWord.DOWNLOAD_TASK)}'
+                    f"{_t(KeyWord.DOWNLOAD_TASK)}"
                     f'{_t(KeyWord.CHANNEL)}:"{chat_id}",'  # 频道名。
                     f'{_t(KeyWord.LINK)}:"{link}",'  # 链接。
-                    f'{_t(KeyWord.LINK_TYPE)}:{_t(link_type)}。'  # 链接类型。
+                    f"{_t(KeyWord.LINK_TYPE)}:{_t(link_type)}。"  # 链接类型。
                 )
-                while self.app.current_task_num >= self.app.max_download_task:  # v1.0.7 增加下载任务数限制。
+                while (
+                    self.app.current_task_num >= self.app.max_download_task
+                ):  # v1.0.7 增加下载任务数限制。
                     await self.event.wait()
                     self.event.clear()
                 # 在获取元数据前建立消息与标签的映射
                 try:
-                    _chat_id = getattr(getattr(message, 'chat', None), 'id', None)
-                    _mid = getattr(message, 'id', None)
+                    _chat_id = getattr(getattr(message, "chat", None), "id", None)
+                    _mid = getattr(message, "id", None)
                     _tag = self.link_tag_map.get(link)
                     if not _tag and _chat_id is not None:
                         _tag = self.listen_download_tag_by_chatid.get(_chat_id)
@@ -1450,14 +1978,17 @@ class TelegramRestrictedMediaDownloader(Bot):
                         self.message_tag_map[(_chat_id, _mid)] = _tag
                 except Exception:
                     pass
-                file_id, temp_file_path, sever_file_size, file_name, save_directory, format_file_size = \
-                    self.get_media_meta(
-                        message=message,
-                        dtype=valid_dtype).values()
-                retry['id'] = file_id
+                (
+                    file_id,
+                    temp_file_path,
+                    sever_file_size,
+                    file_name,
+                    save_directory,
+                    format_file_size,
+                ) = self.get_media_meta(message=message, dtype=valid_dtype).values()
+                retry["id"] = file_id
                 if is_file_duplicate(
-                        save_directory=save_directory,
-                        sever_file_size=sever_file_size
+                    save_directory=save_directory, sever_file_size=sever_file_size
                 ):  # 检测是否存在。
                     self.download_complete_callback(
                         sever_file_size=sever_file_size,
@@ -1471,38 +2002,34 @@ class TelegramRestrictedMediaDownloader(Bot):
                         task_id=None,
                         with_upload=with_upload,
                         diy_download_type=diy_download_type,
-                        _future=save_directory
+                        _future=save_directory,
                     )
                 else:
                     console.log(
-                        f'{_t(KeyWord.DOWNLOAD_TASK)}'
+                        f"{_t(KeyWord.DOWNLOAD_TASK)}"
                         f'{_t(KeyWord.FILE)}:"{file_name}",'
-                        f'{_t(KeyWord.SIZE)}:{format_file_size},'
-                        f'{_t(KeyWord.TYPE)}:{_t(self.app.get_file_type(message, file_name, DownloadStatus.DOWNLOADING))},'
-                        f'{_t(KeyWord.STATUS)}:{_t(DownloadStatus.DOWNLOADING)}。'
+                        f"{_t(KeyWord.SIZE)}:{format_file_size},"
+                        f"{_t(KeyWord.TYPE)}:{_t(self.app.get_file_type(message, file_name, DownloadStatus.DOWNLOADING))},"
+                        f"{_t(KeyWord.STATUS)}:{_t(DownloadStatus.DOWNLOADING)}。"
                     )
                     task_id = self.pb.progress.add_task(
-                        description='📥',
+                        description="📥",
                         filename=truncate_display_filename(file_name),
-                        info=f'0.00B/{format_file_size}',
-                        total=sever_file_size
+                        info=f"0.00B/{format_file_size}",
+                        total=sever_file_size,
                     )
                     _task = self.loop.create_task(
                         self.resume_download(
                             message=message,
                             file_name=temp_file_path,
                             progress=self.pb.bar,
-                            progress_args=(
-                                sever_file_size,
-                                self.pb.progress,
-                                task_id
-                            ),
-                            compare_size=sever_file_size
+                            progress_args=(sever_file_size, self.pb.progress, task_id),
+                            compare_size=sever_file_size,
                         )
                     )
                     MetaData.print_current_task_num(
                         prompt=_t(KeyWord.CURRENT_DOWNLOAD_TASK),
-                        num=self.app.current_task_num
+                        num=self.app.current_task_num,
                     )
                     _task.add_done_callback(
                         partial(
@@ -1517,130 +2044,143 @@ class TelegramRestrictedMediaDownloader(Bot):
                             format_file_size,
                             task_id,
                             with_upload,
-                            diy_download_type
+                            diy_download_type,
                         )
                     )
             else:
-                _error = '不支持或被忽略的类型(已取消)。'
+                _error = "不支持或被忽略的类型(已取消)。"
                 try:
                     _, __, ___, file_name, ____, format_file_size = self.get_media_meta(
-                        message=message,
-                        dtype=valid_dtype
+                        message=message, dtype=valid_dtype
                     ).values()
                     if file_name:
                         console.log(
-                            f'{_t(KeyWord.DOWNLOAD_TASK)}'
+                            f"{_t(KeyWord.DOWNLOAD_TASK)}"
                             f'{_t(KeyWord.FILE)}:"{file_name}",'
-                            f'{_t(KeyWord.SIZE)}:{format_file_size},'
-                            f'{_t(KeyWord.TYPE)}:{_t(self.app.get_file_type(message, file_name, DownloadStatus.SKIP))},'
-                            f'{_t(KeyWord.STATUS)}:{_t(DownloadStatus.SKIP)}。'
+                            f"{_t(KeyWord.SIZE)}:{format_file_size},"
+                            f"{_t(KeyWord.TYPE)}:{_t(self.app.get_file_type(message, file_name, DownloadStatus.SKIP))},"
+                            f"{_t(KeyWord.STATUS)}:{_t(DownloadStatus.SKIP)}。"
                         )
-                        DownloadTask.set_error(link=link, key=file_name, value=_error.replace('。', ''))
+                        DownloadTask.set_error(
+                            link=link, key=file_name, value=_error.replace("。", "")
+                        )
                     else:
-                        raise Exception('不支持或被忽略的类型。')
+                        raise Exception("不支持或被忽略的类型。")
                 except Exception as _:
-                    DownloadTask.set_error(link=link, value=_error.replace('。', ''))
+                    DownloadTask.set_error(link=link, value=_error.replace("。", ""))
                     console.log(
-                        f'{_t(KeyWord.DOWNLOAD_TASK)}'
+                        f"{_t(KeyWord.DOWNLOAD_TASK)}"
                         f'{_t(KeyWord.CHANNEL)}:"{chat_id}",'  # 频道名。
                         f'{_t(KeyWord.LINK)}:"{link}",'  # 链接。
-                        f'{_t(KeyWord.LINK_TYPE)}:{_error}'  # 链接类型。
+                        f"{_t(KeyWord.LINK_TYPE)}:{_error}"  # 链接类型。
                     )
             self.queue.put_nowait(_task) if _task else None
 
     def __check_download_finish(
-            self,
-            message: pyrogram.types.Message,
-            sever_file_size: int,
-            temp_file_path: str,
-            save_directory: str,
-            with_move: bool = True
+        self,
+        message: pyrogram.types.Message,
+        sever_file_size: int,
+        temp_file_path: str,
+        save_directory: str,
+        with_move: bool = True,
     ) -> bool:
         """检测文件是否下完。"""
-        temp_ext: str = '.temp'
-        local_file_size: int = get_file_size(file_path=temp_file_path, temp_ext=temp_ext)
+        temp_ext: str = ".temp"
+        local_file_size: int = get_file_size(
+            file_path=temp_file_path, temp_ext=temp_ext
+        )
         format_local_size: str = MetaData.suitable_units_display(local_file_size)
         format_sever_size: str = MetaData.suitable_units_display(sever_file_size)
-        _file_path: str = os.path.join(save_directory, split_path(temp_file_path).get('file_name'))
-        file_path: str = _file_path[:-len(temp_ext)] if _file_path.endswith(temp_ext) else _file_path
+        _file_path: str = os.path.join(
+            save_directory, split_path(temp_file_path).get("file_name")
+        )
+        file_path: str = (
+            _file_path[: -len(temp_ext)]
+            if _file_path.endswith(temp_ext)
+            else _file_path
+        )
         if compare_file_size(a_size=local_file_size, b_size=sever_file_size):
             if with_move:
                 result: str = move_to_save_directory(
-                    temp_file_path=temp_file_path,
-                    save_directory=save_directory
-                ).get('e_code')
+                    temp_file_path=temp_file_path, save_directory=save_directory
+                ).get("e_code")
                 log.warning(result) if result is not None else None
             console.log(
-                f'{_t(KeyWord.DOWNLOAD_TASK)}'
+                f"{_t(KeyWord.DOWNLOAD_TASK)}"
                 f'{_t(KeyWord.FILE)}:"{file_path}",'
-                f'{_t(KeyWord.SIZE)}:{format_local_size},'
-                f'{_t(KeyWord.TYPE)}:{_t(self.app.get_file_type(message, temp_file_path, DownloadStatus.SUCCESS))},'
-                f'{_t(KeyWord.STATUS)}:{_t(DownloadStatus.SUCCESS)}。',
+                f"{_t(KeyWord.SIZE)}:{format_local_size},"
+                f"{_t(KeyWord.TYPE)}:{_t(self.app.get_file_type(message, temp_file_path, DownloadStatus.SUCCESS))},"
+                f"{_t(KeyWord.STATUS)}:{_t(DownloadStatus.SUCCESS)}。",
             )
             return True
         console.log(
-            f'{_t(KeyWord.DOWNLOAD_TASK)}'
+            f"{_t(KeyWord.DOWNLOAD_TASK)}"
             f'{_t(KeyWord.FILE)}:"{file_path}",'
-            f'{_t(KeyWord.ERROR_SIZE)}:{format_local_size},'
-            f'{_t(KeyWord.ACTUAL_SIZE)}:{format_sever_size},'
-            f'{_t(KeyWord.TYPE)}:{_t(self.app.get_file_type(message, temp_file_path, DownloadStatus.FAILURE))},'
-            f'{_t(KeyWord.STATUS)}:{_t(DownloadStatus.FAILURE)}。'
+            f"{_t(KeyWord.ERROR_SIZE)}:{format_local_size},"
+            f"{_t(KeyWord.ACTUAL_SIZE)}:{format_sever_size},"
+            f"{_t(KeyWord.TYPE)}:{_t(self.app.get_file_type(message, temp_file_path, DownloadStatus.FAILURE))},"
+            f"{_t(KeyWord.STATUS)}:{_t(DownloadStatus.FAILURE)}。"
         )
         return False
 
     @DownloadTask.on_complete
     def download_complete_callback(
-            self,
-            sever_file_size,
-            temp_file_path,
-            link,
-            message,
-            file_name,
-            retry_count,
-            file_id,
-            format_file_size,
-            task_id,
-            with_upload,
-            diy_download_type,
-            _future
+        self,
+        sever_file_size,
+        temp_file_path,
+        link,
+        message,
+        file_name,
+        retry_count,
+        file_id,
+        format_file_size,
+        task_id,
+        with_upload,
+        diy_download_type,
+        _future,
     ):
         if task_id is None:
             if retry_count == 0:
                 console.log(
-                    f'{_t(KeyWord.DOWNLOAD_TASK)}'
+                    f"{_t(KeyWord.DOWNLOAD_TASK)}"
                     f'{_t(KeyWord.ALREADY_EXIST)}:"{_future}"'
                 )
                 console.log(
-                    f'{_t(KeyWord.DOWNLOAD_TASK)}'
+                    f"{_t(KeyWord.DOWNLOAD_TASK)}"
                     f'{_t(KeyWord.FILE)}:"{file_name}",'
-                    f'{_t(KeyWord.SIZE)}:{format_file_size},'
-                    f'{_t(KeyWord.TYPE)}:{_t(self.app.get_file_type(message, file_name, DownloadStatus.SKIP))},'
-                    f'{_t(KeyWord.STATUS)}:{_t(DownloadStatus.SKIP)}。', style='#e6db74'
+                    f"{_t(KeyWord.SIZE)}:{format_file_size},"
+                    f"{_t(KeyWord.TYPE)}:{_t(self.app.get_file_type(message, file_name, DownloadStatus.SKIP))},"
+                    f"{_t(KeyWord.STATUS)}:{_t(DownloadStatus.SKIP)}。",
+                    style="#e6db74",
                 )
                 if self.uploader:
                     self.uploader.download_upload(
                         with_upload=with_upload,
-                        file_path=os.path.join(self.env_save_directory(message), file_name)
+                        file_path=os.path.join(
+                            self.env_save_directory(message), file_name
+                        ),
                     )
         else:
             self.app.current_task_num -= 1
             self.event.set()  # v1.3.4 修复重试下载被阻塞的问题。
             self.queue.task_done()
             if self.__check_download_finish(
-                    message=message,
-                    sever_file_size=sever_file_size,
-                    temp_file_path=temp_file_path,
-                    save_directory=self.env_save_directory(message),
-                    with_move=True
+                message=message,
+                sever_file_size=sever_file_size,
+                temp_file_path=temp_file_path,
+                save_directory=self.env_save_directory(message),
+                with_move=True,
             ):
                 MetaData.print_current_task_num(
                     prompt=_t(KeyWord.CURRENT_DOWNLOAD_TASK),
-                    num=self.app.current_task_num
+                    num=self.app.current_task_num,
                 )
                 if self.uploader:
                     self.uploader.download_upload(
                         with_upload=with_upload,
-                        file_path=os.path.join(self.env_save_directory(message), file_name)
+                        file_path=os.path.join(
+                            self.env_save_directory(message), file_name
+                        ),
                     )
             else:
                 if retry_count < self.app.max_download_retries:
@@ -1648,38 +2188,37 @@ class TelegramRestrictedMediaDownloader(Bot):
                     task = self.loop.create_task(
                         self.create_download_task(
                             message_ids=link if isinstance(link, str) else message,
-                            retry={'id': file_id, 'count': retry_count},
+                            retry={"id": file_id, "count": retry_count},
                             with_upload=with_upload,
-                            diy_download_type=diy_download_type
+                            diy_download_type=diy_download_type,
                         )
                     )
                     task.add_done_callback(
                         partial(
                             self.__retry_call,
                             f'{_t(KeyWord.RE_DOWNLOAD)}:"{file_name}",'
-                            f'{_t(KeyWord.RETRY_TIMES)}:{retry_count}/{self.app.max_download_retries}。'
+                            f"{_t(KeyWord.RETRY_TIMES)}:{retry_count}/{self.app.max_download_retries}。",
                         )
                     )
                 else:
-                    _error = f'(达到最大重试次数:{self.app.max_download_retries}次)。'
+                    _error = f"(达到最大重试次数:{self.app.max_download_retries}次)。"
                     console.log(
-                        f'{_t(KeyWord.DOWNLOAD_TASK)}'
+                        f"{_t(KeyWord.DOWNLOAD_TASK)}"
                         f'{_t(KeyWord.FILE)}:"{file_name}",'
-                        f'{_t(KeyWord.SIZE)}:{format_file_size},'
-                        f'{_t(KeyWord.TYPE)}:{_t(self.app.get_file_type(message, file_name, DownloadStatus.FAILURE))},'
-                        f'{_t(KeyWord.STATUS)}:{_t(DownloadStatus.FAILURE)}'
-                        f'{_error}'
+                        f"{_t(KeyWord.SIZE)}:{format_file_size},"
+                        f"{_t(KeyWord.TYPE)}:{_t(self.app.get_file_type(message, file_name, DownloadStatus.FAILURE))},"
+                        f"{_t(KeyWord.STATUS)}:{_t(DownloadStatus.FAILURE)}"
+                        f"{_error}"
                     )
-                    DownloadTask.set_error(link=link, key=file_name, value=_error.replace('。', ''))
+                    DownloadTask.set_error(
+                        link=link, key=file_name, value=_error.replace("。", "")
+                    )
                     self.bot_task_link.discard(link)
                 link, file_name = None, None
             self.pb.progress.remove_task(task_id=task_id)
         return link, file_name
 
-    async def download_chat(
-            self,
-            chat_id: str
-    ):
+    async def download_chat(self, chat_id: str):
         _filter = Filter()
         download_chat_filter: Union[dict, None] = None
         for i in self.download_chat_filter:
@@ -1689,202 +2228,198 @@ class TelegramRestrictedMediaDownloader(Bot):
             return None
         if not isinstance(download_chat_filter, dict):
             return None
-        chat_id: Union[str, int] = int(chat_id) if chat_id.startswith('-') else chat_id
-        date_filter = download_chat_filter.get('date_range')
-        start_date = date_filter.get('start_date')
-        end_date = date_filter.get('end_date')
-        download_type: dict = download_chat_filter.get('download_type')
+        chat_id: Union[str, int] = int(chat_id) if chat_id.startswith("-") else chat_id
+        date_filter = download_chat_filter.get("date_range")
+        start_date = date_filter.get("start_date")
+        end_date = date_filter.get("end_date")
+        download_type: dict = download_chat_filter.get("download_type")
         links: list = []
         async for message in self.app.client.get_chat_history(
-                chat_id=chat_id,
-                reverse=True
+            chat_id=chat_id, reverse=True
         ):
-            if _filter.date_range(message, start_date, end_date) and _filter.dtype(message, download_type):
+            if _filter.date_range(message, start_date, end_date) and _filter.dtype(
+                message, download_type
+            ):
                 links.append(message.link if message.link else message)
         for link in links:
             await self.create_download_task(
                 message_ids=link,
                 single_link=True,
-                diy_download_type=[_ for _ in DownloadType()]
+                diy_download_type=[_ for _ in DownloadType()],
             )
 
     @DownloadTask.on_create_task
     async def create_download_task(
-            self,
-            message_ids: Union[pyrogram.types.Message, str],
-            retry: Union[dict, None] = None,
-            single_link: bool = False,
-            with_upload: Union[dict, None] = None,
-            diy_download_type: Optional[list] = None
+        self,
+        message_ids: Union[pyrogram.types.Message, str],
+        retry: Union[dict, None] = None,
+        single_link: bool = False,
+        with_upload: Union[dict, None] = None,
+        diy_download_type: Optional[list] = None,
     ) -> dict:
-        retry = retry if retry else {'id': -1, 'count': 0}
-        diy_download_type = [_ for _ in DownloadType()] if with_upload else diy_download_type
+        retry = retry if retry else {"id": -1, "count": 0}
+        diy_download_type = (
+            [_ for _ in DownloadType()] if with_upload else diy_download_type
+        )
         try:
             if isinstance(message_ids, pyrogram.types.Message):
                 chat_id = message_ids.chat.id
                 meta: dict = {
-                    'link_type': LinkType.SINGLE,
-                    'chat_id': chat_id,
-                    'message': message_ids,
-                    'member_num': 1
+                    "link_type": LinkType.SINGLE,
+                    "chat_id": chat_id,
+                    "message": message_ids,
+                    "member_num": 1,
                 }
-                link = message_ids.link if message_ids.link else message_ids.id
+                link = canonical_link_message(message_ids)
             else:
                 meta: dict = await get_message_by_link(
-                    client=self.app.client,
-                    link=message_ids,
-                    single_link=single_link
+                    client=self.app.client, link=message_ids, single_link=single_link
                 )
-                link = message_ids
+                link = canonical_link_str(message_ids)
 
             link_type, chat_id, message, member_num = meta.values()
-            DownloadTask.set(link, 'link_type', link_type)
-            DownloadTask.set(link, 'member_num', member_num)
-            await self.__add_task(chat_id, link_type, link, message, retry, with_upload, diy_download_type)
+            DownloadTask.set(link, "link_type", link_type)
+            DownloadTask.set(link, "member_num", member_num)
+            await self.__add_task(
+                chat_id, link_type, link, message, retry, with_upload, diy_download_type
+            )
             return {
-                'chat_id': chat_id,
-                'member_num': member_num,
-                'link_type': link_type,
-                'status': DownloadStatus.DOWNLOADING,
-                'e_code': None
+                "chat_id": chat_id,
+                "member_num": member_num,
+                "link_type": link_type,
+                "status": DownloadStatus.DOWNLOADING,
+                "e_code": None,
             }
         except UnicodeEncodeError as e:
             return {
-                'chat_id': None,
-                'member_num': 0,
-                'link_type': None,
-                'status': DownloadStatus.FAILURE,
-                'e_code': {
-                    'all_member': str(e),
-                    'error_msg':
-                        '频道标题存在特殊字符,请移步终端下载'
-                }
+                "chat_id": None,
+                "member_num": 0,
+                "link_type": None,
+                "status": DownloadStatus.FAILURE,
+                "e_code": {
+                    "all_member": str(e),
+                    "error_msg": "频道标题存在特殊字符,请移步终端下载",
+                },
             }
         except MsgIdInvalid as e:
             return {
-                'chat_id': None,
-                'member_num': 0,
-                'link_type': None,
-                'status': DownloadStatus.FAILURE,
-                'e_code': {
-                    'all_member': str(e),
-                    'error_msg':
-                        '消息不存在,可能已删除'
-                }
+                "chat_id": None,
+                "member_num": 0,
+                "link_type": None,
+                "status": DownloadStatus.FAILURE,
+                "e_code": {"all_member": str(e), "error_msg": "消息不存在,可能已删除"},
             }
         except UsernameInvalid as e:
             return {
-                'chat_id': None,
-                'member_num': 0,
-                'link_type': None,
-                'status': DownloadStatus.FAILURE,
-                'e_code': {
-                    'all_member': str(e),
-                    'error_msg':
-                        '频道用户名无效,该链接的频道用户名可能已更改或频道已解散'
-                }
+                "chat_id": None,
+                "member_num": 0,
+                "link_type": None,
+                "status": DownloadStatus.FAILURE,
+                "e_code": {
+                    "all_member": str(e),
+                    "error_msg": "频道用户名无效,该链接的频道用户名可能已更改或频道已解散",
+                },
             }
         except ChannelInvalid as e:
             return {
-                'chat_id': None,
-                'member_num': 0,
-                'link_type': None,
-                'status': DownloadStatus.FAILURE,
-                'e_code': {
-                    'all_member': str(e),
-                    'error_msg':
-                        '频道可能为私密频道或话题频道,请让当前账号加入该频道后再重试'
-                }
+                "chat_id": None,
+                "member_num": 0,
+                "link_type": None,
+                "status": DownloadStatus.FAILURE,
+                "e_code": {
+                    "all_member": str(e),
+                    "error_msg": "频道可能为私密频道或话题频道,请让当前账号加入该频道后再重试",
+                },
             }
         except ChannelPrivate_400 as e:
             return {
-                'chat_id': None,
-                'member_num': 0,
-                'link_type': None,
-                'status': DownloadStatus.FAILURE,
-                'e_code': {
-                    'all_member': str(e),
-                    'error_msg':
-                        '频道可能为私密频道或话题频道,当前账号可能已不在该频道,请让当前账号加入该频道后再重试'
-                }
+                "chat_id": None,
+                "member_num": 0,
+                "link_type": None,
+                "status": DownloadStatus.FAILURE,
+                "e_code": {
+                    "all_member": str(e),
+                    "error_msg": "频道可能为私密频道或话题频道,当前账号可能已不在该频道,请让当前账号加入该频道后再重试",
+                },
             }
         except ChannelPrivate_406 as e:
             return {
-                'chat_id': None,
-                'member_num': 0,
-                'link_type': None,
-                'status': DownloadStatus.FAILURE,
-                'e_code': {
-                    'all_member': str(e),
-                    'error_msg':
-                        '频道为私密频道,无法访问'
-                }
+                "chat_id": None,
+                "member_num": 0,
+                "link_type": None,
+                "status": DownloadStatus.FAILURE,
+                "e_code": {
+                    "all_member": str(e),
+                    "error_msg": "频道为私密频道,无法访问",
+                },
             }
         except BotMethodInvalid as e:
-            res: bool = safe_delete(file_p_d=os.path.join(self.app.DIRECTORY_NAME, 'sessions'))
-            error_msg: str = '已删除旧会话文件' if res else '请手动删除软件目录下的sessions文件夹'
+            res: bool = safe_delete(
+                file_p_d=os.path.join(self.app.DIRECTORY_NAME, "sessions")
+            )
+            error_msg: str = (
+                "已删除旧会话文件" if res else "请手动删除软件目录下的sessions文件夹"
+            )
             return {
-                'chat_id': None,
-                'member_num': 0,
-                'link_type': None,
-                'status': DownloadStatus.FAILURE,
-                'e_code': {
-                    'all_member': str(e),
-                    'error_msg':
-                        '检测到使用了「bot_token」方式登录了主账号的行为,'
-                        f'{error_msg},重启软件以「手机号码」方式重新登录'
-                }
+                "chat_id": None,
+                "member_num": 0,
+                "link_type": None,
+                "status": DownloadStatus.FAILURE,
+                "e_code": {
+                    "all_member": str(e),
+                    "error_msg": "检测到使用了「bot_token」方式登录了主账号的行为,"
+                    f"{error_msg},重启软件以「手机号码」方式重新登录",
+                },
             }
         except ValueError as e:
             return {
-                'chat_id': None,
-                'member_num': 0,
-                'link_type': None,
-                'status': DownloadStatus.FAILURE,
-                'e_code': {
-                    'all_member': str(e),
-                    'error_msg': '没有找到有效链接'
-                }
+                "chat_id": None,
+                "member_num": 0,
+                "link_type": None,
+                "status": DownloadStatus.FAILURE,
+                "e_code": {"all_member": str(e), "error_msg": "没有找到有效链接"},
             }
         except UsernameNotOccupied as e:
             return {
-                'chat_id': None,
-                'member_num': 0,
-                'link_type': None,
-                'status': DownloadStatus.FAILURE,
-                'e_code': {
-                    'all_member': str(e), 'error_msg': '频道不存在'
-                }
+                "chat_id": None,
+                "member_num": 0,
+                "link_type": None,
+                "status": DownloadStatus.FAILURE,
+                "e_code": {"all_member": str(e), "error_msg": "频道不存在"},
             }
         except Exception as e:
             log.exception(e)
             return {
-                'chat_id': None,
-                'member_num': 0,
-                'link_type': None,
-                'status': DownloadStatus.FAILURE,
-                'e_code': {
-                    'all_member': str(e),
-                    'error_msg': '未收录到的错误'
-                }
+                "chat_id": None,
+                "member_num": 0,
+                "link_type": None,
+                "status": DownloadStatus.FAILURE,
+                "e_code": {"all_member": str(e), "error_msg": "未收录到的错误"},
             }
 
     def __process_links(self, link: Union[str, list]) -> Union[set, None]:
         """将链接(文本格式或链接)处理成集合。"""
-        start_content: str = 'https://t.me/'
+        start_content: str = "https://t.me/"
         links: set = set()
         if isinstance(link, str):
-            if link.endswith('.txt') and os.path.isfile(link):
-                with open(file=link, mode='r', encoding='UTF-8') as _:
+            if link.endswith(".txt") and os.path.isfile(link):
+                with open(file=link, mode="r", encoding="UTF-8") as _:
                     _links: list = [content.strip() for content in _.readlines()]
                 for i in _links:
                     if i.startswith(start_content):
                         links.add(i)
                         self.bot_task_link.add(i)
-                    elif i == '' or '#':
+                        try:
+                            self.bot_task_link_canon.add(canonical_link_str(i))
+                        except Exception:
+                            pass
+                    elif i == "" or i.startswith("#"):
+                        # 空行或以#开头的注释行
                         continue
                     else:
-                        log.warning(f'"{i}"是一个非法链接,{_t(KeyWord.STATUS)}:{_t(DownloadStatus.SKIP)}。')
+                        log.warning(
+                            f'"{i}"是一个非法链接,{_t(KeyWord.STATUS)}:{_t(DownloadStatus.SKIP)}。'
+                        )
             elif link.startswith(start_content):
                 links.add(link)
         elif isinstance(link, list):
@@ -1895,15 +2430,15 @@ class TelegramRestrictedMediaDownloader(Bot):
         if links:
             return links
         elif not self.app.bot_token:
-            console.log('没有找到有效链接,程序已退出。', style='#FF4689')
+            console.log("没有找到有效链接,程序已退出。", style="#FF4689")
             sys.exit(0)
         else:
-            console.log('没有找到有效链接。', style='#FF4689')
+            console.log("没有找到有效链接。", style="#FF4689")
             return None
 
     @staticmethod
     def __retry_call(notice, _future):
-        console.log(notice, style='#FF4689')
+        console.log(notice, style="#FF4689")
 
     async def __download_media_from_links(self) -> None:
         await self.app.client.start(use_qr=False)
@@ -1918,10 +2453,10 @@ class TelegramRestrictedMediaDownloader(Bot):
                     bot_token=self.app.bot_token,
                     workdir=self.app.work_directory,
                     proxy=self.app.proxy if self.app.enable_proxy else None,
-                    sleep_threshold=SLEEP_THRESHOLD
-                )
+                    sleep_threshold=SLEEP_THRESHOLD,
+                ),
             )
-            console.log(result, style='#B1DB74' if self.is_bot_running else '#FF4689')
+            console.log(result, style="#B1DB74" if self.is_bot_running else "#FF4689")
             if self.is_bot_running:
                 self.uploader = TelegramUploader(
                     client=self.app.client,
@@ -1930,22 +2465,32 @@ class TelegramRestrictedMediaDownloader(Bot):
                     progress=self.pb,
                     max_upload_task=self.app.max_upload_task,
                     max_retry_count=self.app.max_upload_retries,
-                    notify=self.done_notice
+                    notify=self.done_notice,
                 )
                 self.cd = CallbackData()
                 if self.gc.upload_delete:
                     console.log(
-                        f'在使用监听转发(/listen_forward)时:\n'
+                        f"在使用监听转发(/listen_forward)时:\n"
                         f'当检测到"受限转发"时,自动采用"下载后上传"的方式,并在完成后删除本地文件。\n'
-                        f'如需关闭,前往机器人[帮助页面]->[设置]->[上传设置]进行修改。\n',
-                        style='#FF4689'
+                        f"如需关闭,前往机器人[帮助页面]->[设置]->[上传设置]进行修改。\n",
+                        style="#FF4689",
                     )
         self.is_running = True
         self.running_log.add(self.is_running)
         links: Union[set, None] = self.__process_links(link=self.app.links)
-        # 将初始任务添加到队列中。
-        [await self.loop.create_task(self.create_download_task(message_ids=link, retry=None)) for link in
-         links] if links else None
+        if links:
+            # 使用规范化键与历史完成集比较，避免不同参数形式导致的漏判
+            pending_links = [
+                link
+                for link in links
+                if canonical_link_str(link) not in DownloadTask.COMPLETE_LINK
+            ]
+            [
+                await self.loop.create_task(
+                    self.create_download_task(message_ids=link, retry=None)
+                )
+                for link in pending_links
+            ]
         # 处理队列中的任务与机器人事件。
         while not self.queue.empty() or self.is_bot_running:
             result = await self.queue.get()
@@ -1953,11 +2498,12 @@ class TelegramRestrictedMediaDownloader(Bot):
                 await result
             except PermissionError as e:
                 log.error(
-                    '临时文件无法移动至下载路径:\n'
-                    '1.可能存在使用网络路径、挂载硬盘行为(本软件不支持);\n'
-                    '2.可能存在多开软件时,同时操作同一文件或目录导致冲突;\n'
-                    '3.由于软件设计缺陷,没有考虑到不同频道文件名相同的情况(若调整将会导致部分用户更新后重复下载已有文件),当保存路径下文件过多时,可能恰巧存在相同文件名的文件,导致相同文件名无法正常移动,故请定期整理归档下载链接与保存路径下的文件。'
-                    f'{_t(KeyWord.REASON)}:"{e}"')
+                    "临时文件无法移动至下载路径:\n"
+                    "1.可能存在使用网络路径、挂载硬盘行为(本软件不支持);\n"
+                    "2.可能存在多开软件时,同时操作同一文件或目录导致冲突;\n"
+                    "3.由于软件设计缺陷,没有考虑到不同频道文件名相同的情况(若调整将会导致部分用户更新后重复下载已有文件),当保存路径下文件过多时,可能恰巧存在相同文件名的文件,导致相同文件名无法正常移动,故请定期整理归档下载链接与保存路径下的文件。"
+                    f'{_t(KeyWord.REASON)}:"{e}"'
+                )
         # 等待所有任务完成。
         await self.queue.join()
         await self.app.client.stop() if self.app.client.is_connected else None
@@ -1969,30 +2515,37 @@ class TelegramRestrictedMediaDownloader(Bot):
             self.app.print_config_table(
                 links=self.app.links,
                 download_type=self.app.download_type,
-                proxy=self.app.proxy
+                proxy=self.app.proxy,
             )
             self.loop.run_until_complete(self.__download_media_from_links())
         except KeyError as e:
             record_error: bool = True
-            if str(e) == '0':
-                log.error('「网络」或「代理问题」,在确保当前网络连接正常情况下检查:\n「VPN」是否可用,「软件代理」是否配置正确。')
+            if str(e) == "0":
+                log.error(
+                    "「网络」或「代理问题」,在确保当前网络连接正常情况下检查:\n「VPN」是否可用,「软件代理」是否配置正确。"
+                )
                 console.print(Solution.PROXY_NOT_CONFIGURED)
                 raise SystemExit(0)
             log.exception(f'运行出错,{_t(KeyWord.REASON)}:"{e}"')
         except pyrogram.errors.BadMsgNotification as e:
             record_error: bool = True
-            if str(e) in (str(pyrogram.errors.BadMsgNotification(16)), str(pyrogram.errors.BadMsgNotification(17))):
+            if str(e) in (
+                str(pyrogram.errors.BadMsgNotification(16)),
+                str(pyrogram.errors.BadMsgNotification(17)),
+            ):
                 console.print(Solution.SYSTEM_TIME_NOT_SYNCHRONIZED)
                 raise SystemExit(0)
             log.exception(f'运行出错,{_t(KeyWord.REASON)}:"{e}"')
         except (SessionRevoked, AuthKeyUnregistered, SessionExpired, Unauthorized) as e:
             log.error(f'登录时遇到错误,{_t(KeyWord.REASON)}:"{e}"')
-            res: bool = safe_delete(file_p_d=os.path.join(self.app.DIRECTORY_NAME, 'sessions'))
+            res: bool = safe_delete(
+                file_p_d=os.path.join(self.app.DIRECTORY_NAME, "sessions")
+            )
             record_error: bool = True
             if res:
-                log.warning('账号已失效,已删除旧会话文件,请重启软件。')
+                log.warning("账号已失效,已删除旧会话文件,请重启软件。")
             else:
-                log.error('账号已失效,请手动删除软件目录下的sessions文件夹后重启软件。')
+                log.error("账号已失效,请手动删除软件目录下的sessions文件夹后重启软件。")
         except (ConnectionError, TimeoutError) as e:
             record_error: bool = True
             if not self.app.enable_proxy:
@@ -2004,11 +2557,12 @@ class TelegramRestrictedMediaDownloader(Bot):
             record_error: bool = True
             log.error(f'登录超时,请重新打开软件尝试登录,{_t(KeyWord.REASON)}:"{e}"')
         except KeyboardInterrupt:
-            console.log('用户手动终止下载任务。')
+            console.log("用户手动终止下载任务。")
         except OperationalError as e:
             record_error: bool = True
             log.error(
-                f'检测到多开软件时,由于在上一个实例中「下载完成」后窗口没有被关闭的行为,请在关闭后重试,{_t(KeyWord.REASON)}:"{e}"')
+                f'检测到多开软件时,由于在上一个实例中「下载完成」后窗口没有被关闭的行为,请在关闭后重试,{_t(KeyWord.REASON)}:"{e}"'
+            )
         except Exception as e:
             record_error: bool = True
             log.exception(msg=f'运行出错,{_t(KeyWord.REASON)}:"{e}"')
@@ -2018,11 +2572,13 @@ class TelegramRestrictedMediaDownloader(Bot):
             if not record_error:
                 self.app.print_link_table(
                     link_info=DownloadTask.LINK_INFO,
-                    export=self.gc.get_config('export_table').get('link')
+                    export=self.gc.get_config("export_table").get("link"),
                 )
                 self.app.print_count_table(
-                    export=self.gc.get_config('export_table').get('count')
+                    export=self.gc.get_config("export_table").get("count")
                 )
                 MetaData.pay()
-                self.app.process_shutdown(60) if len(self.running_log) == 2 else None  # v1.2.8如果并未打开客户端执行任何下载,则不执行关机。
+                self.app.process_shutdown(60) if len(
+                    self.running_log
+                ) == 2 else None  # v1.2.8如果并未打开客户端执行任何下载,则不执行关机。
             self.app.ctrl_c()

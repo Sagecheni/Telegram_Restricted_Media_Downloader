@@ -9,13 +9,20 @@ import re
 from typing import Tuple, List, Union
 
 import pyrogram
-from pyrogram.errors.exceptions.bad_request_400 import MsgIdInvalid, UsernameNotOccupied
+from pyrogram import utils
+from pyrogram.errors.exceptions.bad_request_400 import (
+    MsgIdInvalid,
+    UsernameNotOccupied
+)
 from pyrogram.types.messages_and_media import ReplyParameters
 from urllib.parse import parse_qs, urlparse
 from rich.text import Text
 
-from module import utils
-from module.enums import Link, LinkType, DownloadType
+from module.enums import (
+    Link,
+    LinkType,
+    DownloadType
+)
 
 
 def safe_index(lst: list, index: int, default=None):
@@ -333,9 +340,7 @@ def format_chat_link(link: str, topic: bool = False) -> str:
         else:  # 对于普通类型。
             if len_parts >= 5:
                 # 5个部分时,保留前4个部分(去掉最后一个)。
-                result = "/".join(
-                    parts[:4]
-                )  # https://t.me/coustomer/144 -> https://t.me/coustomer
+                result = '/'.join(parts[:4])  # https://t.me/customer/144 -> https://t.me/customer
     else:  # 话题格式化。
         if parts[3] == "c" and len_parts >= 5:  # 对于/c/类型。
             if len_parts >= 7:
@@ -345,13 +350,11 @@ def format_chat_link(link: str, topic: bool = False) -> str:
                 )  # https://t.me/c/2495197831/100/200 -> https://t.me/c/2495197831/100
         elif len_parts >= 6:
             # 6个部分时,保留前5个部分(去掉最后一个)。
-            result = "/".join(
-                parts[:5]
-            )  # https://t.me/coustomer/5/1 -> https://t.me/coustomer/5
+            result = '/'.join(parts[:5])  # https://t.me/customer/5/1 -> https://t.me/customer/5
 
     return result if result else link
 
 
-class Solution:
+class Issues:
     PROXY_NOT_CONFIGURED = '[#79FCD4]代理配置方法[/#79FCD4][#FF79D4]请访问:[/#FF79D4]\n[link=https://github.com/Gentlesprite/Telegram_Restricted_Media_Downloader/wiki#问题14-error-运行出错原因0-keyerror-0]https://github.com/Gentlesprite/Telegram_Restricted_Media_Downloader/wiki#问题14-error-运行出错原因0-keyerror-0[/link]\n[#FCFF79]若[/#FCFF79][#FF4689]无法[/#FF4689][#FF7979]访问[/#FF7979][#79FCD4],[/#79FCD4][#FCFF79]可[/#FCFF79][#d4fc79]查阅[/#d4fc79][#FC79A5]软件压缩包所提供的[/#FC79A5][#79E2FC]"使用手册"[/#79E2FC][#79FCD4]文件夹下的[/#79FCD4][#FFB579]"常见问题及解决方案汇总.pdf"[/#FFB579][#79FCB5]中的[/#79FCB5][#D479FC]【问题14】[/#D479FC][#FCE679]进行操作[/#FCE679][#FC79A6]。[/#FC79A6]'
     SYSTEM_TIME_NOT_SYNCHRONIZED = '[#FCFF79]检测到[/#FCFF79][#FF7979]系统时间[/#FF7979][#FC79A5]未同步[/#FC79A5][#79E2FC],[/#79E2FC][#79FCD4]解决方法[/#79FCD4][#FF79D4]请访问:[/#FF79D4]\nhttps://github.com/Gentlesprite/Telegram_Restricted_Media_Downloader/issues/5#issuecomment-2580677184\n[#FCFF79]若[/#FCFF79][#FF4689]无法[/#FF4689][#FF7979]访问[/#FF7979][#79FCD4],[/#79FCD4][#FCFF79]可[/#FCFF79][#d4fc79]查阅[/#d4fc79][#FC79A5]软件压缩包所提供的[/#FC79A5][#79E2FC]"使用手册"[/#79E2FC][#79FCB5]中的[/#79FCB5][#D479FC]【问题4】[/#D479FC][#FCE679]进行操作[/#FCE679][#FC79A6],[/#FC79A6][#79FCD4]并[/#79FCD4][#79FCB5]重启软件[/#79FCB5]。'

@@ -377,7 +377,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                     status_msg = await self.safe_process_message(
                         client=client,
                         message=message,
-                        text=f"🔄 检测到排行榜链接，正在下载 {len(ranking_links)} 个视频...",
+                        text=[f"🔄 检测到排行榜链接，正在下载 {len(ranking_links)} 个视频..."],
                     )
                     success_count = 0
                     fail_links = []

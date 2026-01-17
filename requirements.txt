@@ -8,3 +8,4 @@ pygments
 pymediainfo==7.0.1
 yt-dlp
 gallery-dl
+aiohttp

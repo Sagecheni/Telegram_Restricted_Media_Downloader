@@ -10,6 +10,7 @@ import datetime
 import re
 import json
 import shutil
+import aiohttp
 
 from functools import partial
 from sqlite3 import OperationalError
@@ -219,6 +220,62 @@ class TelegramRestrictedMediaDownloader(Bot):
             )
         return False
 
+    async def _download_ranking_video(self, url: str) -> bool:
+        """下载 twitter-ero-video-ranking.com 视频"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        log.error(f"请求失败: {url}, status={response.status}")
+                        return False
+                    html = await response.text()
+            
+            # 提取 MP4 链接
+            # 寻找 <a ... href="...mp4" ...>
+            mp4_pattern = r'href="([^"]+\.mp4)"'
+            match = re.search(mp4_pattern, html)
+            if not match:
+                log.warning(f"未找到 MP4 链接: {url}")
+                return False
+                
+            mp4_url = match.group(1)
+            video_id = url.split('/')[-1]
+            
+            # 构建保存路径
+            save_dir = os.path.join(self.app.save_directory, "TwitterRanking")
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+            
+            file_path = os.path.join(save_dir, f"{video_id}.mp4")
+            
+            if os.path.exists(file_path):
+                log.info(f"文件已存在，跳过: {file_path}")
+                return True
+                
+            log.info(f"开始下载排行榜视频: {mp4_url}")
+            
+            # 使用 yt-dlp 下载 (更稳定)
+            # 或者直接 requests/aiohttp 下载? 既然有 yt-dlp 依赖，用 yt-dlp 最好
+            # 为了简单起见，这里先尝试用 aiohttp 下载流
+            async with aiohttp.ClientSession() as session:
+                async with session.get(mp4_url) as resp:
+                    if resp.status == 200:
+                        with open(file_path, 'wb') as f:
+                            while True:
+                                chunk = await resp.content.read(1024*1024)
+                                if not chunk:
+                                    break
+                                f.write(chunk)
+                        log.info(f"下载成功: {file_path}")
+                        return True
+                    else:
+                        log.error(f"下载视频流失败: {mp4_url}, status={resp.status}")
+                        return False
+                        
+        except Exception as e:
+            log.exception(f"下载排行榜视频出错: {url}, 原因: {e}")
+            return False
+
     def env_save_directory(self, message: pyrogram.types.Message) -> str:
         save_directory = self.app.save_directory
         for placeholder in SaveDirectoryPrefix():
@@ -309,6 +366,41 @@ class TelegramRestrictedMediaDownloader(Bot):
 
             # 若既不是 t.me 链接，又没有识别到外部站点，交由后续逻辑处理
             if not x_links and not ig_links and not iwara_links:
+                # 检查是否为 twitter-ero-video-ranking.com 链接
+                ranking_pattern = r"https?://(?:www\.)?twitter-ero-video-ranking\.com/zh-CN/movie/([a-zA-Z0-9]+)"
+                ranking_links = []
+                for p in parts:
+                    if re.match(ranking_pattern, p):
+                        ranking_links.append(p)
+                
+                if ranking_links:
+                    status_msg = await self.safe_process_message(
+                        client=client,
+                        message=message,
+                        text=f"🔄 检测到排行榜链接，正在下载 {len(ranking_links)} 个视频...",
+                    )
+                    success_count = 0
+                    fail_links = []
+                    
+                    for link in ranking_links:
+                        if await self._download_ranking_video(link):
+                            success_count += 1
+                        else:
+                            fail_links.append(link)
+                            
+                    summary = [f"✅ 排行榜视频下载完成: 成功 {success_count} 个"]
+                    if fail_links:
+                        summary.append("❌ 以下链接下载失败:")
+                        summary.extend(fail_links)
+                        
+                    await self.safe_edit_message(
+                        client=client,
+                        message=message,
+                        last_message_id=status_msg.id,
+                        text="\n".join(summary),
+                    )
+                    return None
+
                 return None
 
             # 1. 先尝试通过 gallery-dl 下载所有外部链接

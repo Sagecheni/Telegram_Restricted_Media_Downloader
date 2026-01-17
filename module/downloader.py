@@ -231,8 +231,9 @@ class TelegramRestrictedMediaDownloader(Bot):
                     html = await response.text()
             
             # 提取 MP4 链接
-            # 寻找 <a ... href="...mp4" ...>
-            mp4_pattern = r'href="([^"]+\.mp4)"'
+            # 寻找 <a ... href="...mp4..." ...>
+            # 更新正则以支持带参数的 URL (例如 ?tag=14)
+            mp4_pattern = r'href="([^"]+\.mp4[^"]*)"'
             match = re.search(mp4_pattern, html)
             if not match:
                 log.warning(f"未找到 MP4 链接: {url}")

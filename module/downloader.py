@@ -220,7 +220,7 @@ class TelegramRestrictedMediaDownloader(Bot):
             )
         return False
 
-    async def _download_ranking_video(self, url: str) -> bool:
+    async def _download_ranking_video(self, url: str, message: pyrogram.types.Message) -> bool:
         """下载 twitter-ero-video-ranking.com 视频"""
         try:
             async with aiohttp.ClientSession() as session:
@@ -243,7 +243,9 @@ class TelegramRestrictedMediaDownloader(Bot):
             video_id = url.split('/')[-1]
             
             # 构建保存路径
-            save_dir = os.path.join(self.app.save_directory, "TwitterRanking")
+            # 使用 env_save_directory 解析占位符 (如 %CHAT_ID%)
+            base_save_dir = self.env_save_directory(message)
+            save_dir = os.path.join(base_save_dir, "TwitterRanking")
             if not os.path.exists(save_dir):
                 os.makedirs(save_dir)
             
@@ -384,7 +386,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                     fail_links = []
                     
                     for link in ranking_links:
-                        if await self._download_ranking_video(link):
+                        if await self._download_ranking_video(link, message):
                             success_count += 1
                         else:
                             fail_links.append(link)

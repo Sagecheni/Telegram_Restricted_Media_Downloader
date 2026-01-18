@@ -231,31 +231,37 @@ class TelegramRestrictedMediaDownloader(Bot):
     async def _download_ranking_video(
         self, url: str, message: pyrogram.types.Message
     ) -> bool:
-        """下载 twitter-ero-video-ranking.com 视频"""
+        """下载 twitter-ero-video-ranking.com 视频 (支持直接 mp4 链接)"""
         try:
-            # 1. Manually fetch HTML to find the video link
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer": "https://twitter.com/",
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers) as response:
-                    if response.status != 200:
-                        log.error(f"请求排行榜页面失败: {url}, status={response.status}")
-                        return False
-                    html = await response.text()
+            mp4_url = ""
+            if "video.twimg.com" in url:
+                # Direct MP4 link provided
+                mp4_url = url
+                log.info(f"检测到直接视频链接: {mp4_url}")
+            else:
+                # 1. Manually fetch HTML to find the video link
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Referer": "https://twitter.com/",
+                }
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, headers=headers) as response:
+                        if response.status != 200:
+                            log.error(f"请求排行榜页面失败: {url}, status={response.status}")
+                            return False
+                        html = await response.text()
 
-            # 2. Extract MP4 link manually (to handle resolution variations robustly)
-            mp4_pattern = r'href="([^"]+\.mp4[^"]*)"'
-            match = re.search(mp4_pattern, html)
-            if not match:
-                log.warning(f"未找到 MP4 链接: {url}")
-                return False
+                # 2. Extract MP4 link manually (to handle resolution variations robustly)
+                mp4_pattern = r'href="([^"]+\.mp4[^"]*)"'
+                match = re.search(mp4_pattern, html)
+                if not match:
+                    log.warning(f"未找到 MP4 链接: {url}")
+                    return False
 
-            mp4_url = match.group(1)
-            log.info(f"解析到视频链接: {mp4_url}")
+                mp4_url = match.group(1)
+                log.info(f"解析到视频链接: {mp4_url}")
 
-            video_id = url.split("/")[-1]
+            video_id = mp4_url.split("/")[-1].split("?")[0]  # Ensure query params are stripped from filename
 
             # 构建保存路径
             base_save_dir = self.env_save_directory(message)
@@ -389,11 +395,13 @@ class TelegramRestrictedMediaDownloader(Bot):
 
             # 若既不是 t.me 链接，又没有识别到外部站点，交由后续逻辑处理
             if not x_links and not ig_links and not iwara_links:
-                # 检查是否为 twitter-ero-video-ranking.com 链接
+                # 检查是否为 twitter-ero-video-ranking.com 链接 或 video.twimg.com 直接链接
                 ranking_pattern = r"https?://(?:www\.)?twitter-ero-video-ranking\.com/zh-CN/movie/([a-zA-Z0-9_-]+)"
+                direct_twimg_pattern = r"https?://video\.twimg\.com/.*\.mp4.*"
+                
                 ranking_links = []
                 for p in parts:
-                    if re.match(ranking_pattern, p):
+                    if re.match(ranking_pattern, p) or re.match(direct_twimg_pattern, p):
                         ranking_links.append(p)
 
                 if ranking_links:

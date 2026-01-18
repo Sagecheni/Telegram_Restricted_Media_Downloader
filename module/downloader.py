@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import sys
+import time
 from functools import partial
 from sqlite3 import OperationalError
 from typing import Callable, Dict, Iterable, Optional, Tuple, Union
@@ -92,6 +93,162 @@ from module.util import (
 )
 
 
+class TelegramProgressTracker:
+    """管理 Telegram 消息中的下载进度显示"""
+
+    def __init__(self, client: pyrogram.Client, chat_id: int, update_interval: float = 2.0):
+        """
+        初始化 Telegram 进度追踪器
+
+        Args:
+            client: Pyrogram 客户端
+            chat_id: 聊天 ID
+            update_interval: 更新间隔（秒），默认 2 秒
+        """
+        self.client = client
+        self.chat_id = chat_id
+        self.progress_messages: Dict[str, pyrogram.types.Message] = {}
+        self.last_update_time: Dict[str, float] = {}
+        self.update_interval = update_interval
+        self.last_bytes: Dict[str, int] = {}  # 用于计算速度
+        self.last_speed_time: Dict[str, float] = {}
+
+    async def create_progress_message(
+        self, task_id: str, filename: str
+    ) -> Optional[pyrogram.types.Message]:
+        """
+        创建进度消息
+
+        Args:
+            task_id: 任务 ID
+            filename: 文件名
+
+        Returns:
+            创建的消息对象，如果失败返回 None
+        """
+        try:
+            text = self._format_progress_text(filename, 0, 0, 0)
+            message = await self.client.send_message(self.chat_id, text)
+            self.progress_messages[task_id] = message
+            self.last_update_time[task_id] = time.time()
+            self.last_bytes[task_id] = 0
+            self.last_speed_time[task_id] = time.time()
+            return message
+        except Exception as e:
+            log.warning(f'创建进度消息失败: {e}')
+            return None
+
+    async def update_progress(
+        self,
+        task_id: str,
+        filename: str,
+        current: int,
+        total: int,
+    ) -> None:
+        """
+        更新进度（带节流控制）
+
+        Args:
+            task_id: 任务 ID
+            filename: 文件名
+            current: 当前已下载字节数
+            total: 总字节数
+        """
+        current_time = time.time()
+
+        # 节流：仅在距离上次更新超过 update_interval 时才更新
+        if task_id in self.last_update_time:
+            if current_time - self.last_update_time[task_id] < self.update_interval:
+                return
+
+        # 计算速度
+        speed = 0.0
+        if task_id in self.last_bytes and task_id in self.last_speed_time:
+            time_diff = current_time - self.last_speed_time[task_id]
+            if time_diff > 0:
+                bytes_diff = current - self.last_bytes[task_id]
+                speed = bytes_diff / time_diff
+
+        if task_id in self.progress_messages:
+            text = self._format_progress_text(filename, current, total, speed)
+            try:
+                await self.client.edit_message_text(
+                    self.chat_id, self.progress_messages[task_id].id, text
+                )
+                self.last_update_time[task_id] = current_time
+                self.last_bytes[task_id] = current
+                self.last_speed_time[task_id] = current_time
+            except Exception as e:
+                # 忽略消息编辑失败（可能是消息被删除或频率限制）
+                log.debug(f"更新进度消息失败: {e}")
+
+    async def complete_progress(
+        self, task_id: str, filename: str, success: bool = True
+    ) -> None:
+        """
+        标记完成
+
+        Args:
+            task_id: 任务 ID
+            filename: 文件名
+            success: 是否成功
+        """
+        if task_id in self.progress_messages:
+            status = "✅ 下载完成" if success else "❌ 下载失败"
+            text = f"{status}\n📁 文件: {truncate_display_filename(filename)}"
+            try:
+                await self.client.edit_message_text(
+                    self.chat_id, self.progress_messages[task_id].id, text
+                )
+            except Exception as e:
+                log.debug(f"更新完成消息失败: {e}")
+            finally:
+                # 清理
+                self.progress_messages.pop(task_id, None)
+                self.last_update_time.pop(task_id, None)
+                self.last_bytes.pop(task_id, None)
+                self.last_speed_time.pop(task_id, None)
+
+    def _format_progress_text(
+        self, filename: str, current: int, total: int, speed: float
+    ) -> str:
+        """
+        格式化进度文本
+
+        Args:
+            filename: 文件名
+            current: 当前字节数
+            total: 总字节数
+            speed: 下载速度（字节/秒）
+
+        Returns:
+            格式化的进度文本
+        """
+        if total > 0:
+            percentage = (current / total) * 100
+            bar_length = 20
+            filled = int(bar_length * current / total)
+            bar = "█" * filled + "░" * (bar_length - filled)
+
+            current_str = MetaData.suitable_units_display(current)
+            total_str = MetaData.suitable_units_display(total)
+            speed_str = (
+                f"{MetaData.suitable_units_display(int(speed))}/s"
+                if speed > 0
+                else "计算中..."
+            )
+
+            return (
+                f"📥 下载中...\n"
+                f"📁 {truncate_display_filename(filename)}\n"
+                f"[{bar}] {percentage:.1f}%\n"
+                f"📊 {current_str} / {total_str}\n"
+                f"⚡️ {speed_str}"
+            )
+        else:
+            return f"📥 正在准备下载...\n📁 {truncate_display_filename(filename)}"
+
+
 class TelegramRestrictedMediaDownloader(Bot):
     def __init__(self):
         super().__init__()
@@ -123,6 +280,8 @@ class TelegramRestrictedMediaDownloader(Bot):
         )
         self.gallery_dl_config: Union[dict, None] = None
         self._load_gallery_dl_config()
+        # Telegram 进度追踪器（每个 chat_id 一个追踪器）
+        self.telegram_progress_trackers: Dict[int, TelegramProgressTracker] = {}
 
     def _load_gallery_dl_config(self) -> None:
         try:
@@ -1941,6 +2100,20 @@ class TelegramRestrictedMediaDownloader(Bot):
         except Exception as e:
             log.exception(f"监听转发出现错误,{_t(KeyWord.REASON)}:{e}")
 
+    def _get_progress_tracker(self, chat_id: int) -> Optional[TelegramProgressTracker]:
+        """获取或创建指定聊天的进度追踪器."""
+        if chat_id not in self.telegram_progress_trackers:
+            try:
+                self.telegram_progress_trackers[chat_id] = TelegramProgressTracker(
+                    client=self.bot if self.bot else self.app.client,
+                    chat_id=chat_id,
+                    update_interval=2.0,
+                )
+            except Exception as e:
+                log.warning(f"创建进度追踪器失败: {e}")
+                return None
+        return self.telegram_progress_trackers.get(chat_id)
+
     async def resume_download(
         self,
         message: Union[pyrogram.types.Message, str],
@@ -1951,6 +2124,8 @@ class TelegramRestrictedMediaDownloader(Bot):
         compare_size: Union[
             int, None
         ] = None,  # 不为None时,将通过大小比对判断是否为完整文件。
+        telegram_progress_task_id: Optional[str] = None,  # Telegram 进度任务 ID
+        telegram_chat_id: Optional[int] = None,  # Telegram 聊天 ID
     ) -> str:
         temp_path = f"{file_name}.temp"
         if os.path.exists(file_name) and compare_size:
@@ -2009,7 +2184,20 @@ class TelegramRestrictedMediaDownloader(Bot):
             ):
                 f.write(chunk)
                 downloaded += len(chunk)
+                # 更新终端进度条
                 progress(downloaded, *progress_args)
+                # 更新 Telegram 进度（如果启用）
+                if telegram_progress_task_id and telegram_chat_id:
+                    tracker = self._get_progress_tracker(telegram_chat_id)
+                    if tracker and compare_size:
+                        # 从文件名中提取显示名称
+                        display_name = os.path.basename(file_name)
+                        await tracker.update_progress(
+                            telegram_progress_task_id,
+                            display_name,
+                            downloaded,
+                            compare_size,
+                        )
         if compare_size is None or compare_file_size(
             a_size=downloaded, b_size=compare_size
         ):
@@ -2137,6 +2325,24 @@ class TelegramRestrictedMediaDownloader(Bot):
                         _future=save_directory,
                     )
                 else:
+                    # 准备 Telegram 进度追踪
+                    telegram_task_id = None
+                    telegram_chat_id = None
+                    try:
+                        if isinstance(message, pyrogram.types.Message):
+                            from_user = getattr(message, 'from_user', None)
+                            if from_user:
+                                telegram_chat_id = getattr(from_user, 'id', None)
+                                if telegram_chat_id:
+                                    tracker = self._get_progress_tracker(telegram_chat_id)
+                                    if tracker:
+                                        telegram_task_id = f"{file_id}_{int(time.time())}"
+                                        await tracker.create_progress_message(
+                                            telegram_task_id, file_name
+                                        )
+                    except Exception as e:
+                        log.debug(f"创建 Telegram 进度消息失败: {e}")
+                    
                     console.log(
                         f"{_t(KeyWord.DOWNLOAD_TASK)}"
                         f'{_t(KeyWord.FILE)}:"{file_name}",'
@@ -2157,6 +2363,8 @@ class TelegramRestrictedMediaDownloader(Bot):
                             progress=self.pb.bar,
                             progress_args=(sever_file_size, self.pb.progress, task_id),
                             compare_size=sever_file_size,
+                            telegram_progress_task_id=telegram_task_id,
+                            telegram_chat_id=telegram_chat_id,
                         )
                     )
                     MetaData.print_current_task_num(
@@ -2177,6 +2385,8 @@ class TelegramRestrictedMediaDownloader(Bot):
                             task_id,
                             with_upload,
                             diy_download_type,
+                            telegram_task_id,
+                            telegram_chat_id,
                         )
                     )
             else:
@@ -2270,6 +2480,8 @@ class TelegramRestrictedMediaDownloader(Bot):
         with_upload,
         diy_download_type,
         _future,
+        telegram_task_id=None,  # Telegram 进度任务 ID
+        telegram_chat_id=None,  # Telegram 聊天 ID
     ):
         if task_id is None:
             if retry_count == 0:
@@ -2303,6 +2515,13 @@ class TelegramRestrictedMediaDownloader(Bot):
                 save_directory=self.env_save_directory(message),
                 with_move=True,
             ):
+                # 更新 Telegram 进度为完成
+                if telegram_task_id and telegram_chat_id:
+                    tracker = self._get_progress_tracker(telegram_chat_id)
+                    if tracker:
+                        asyncio.create_task(
+                            tracker.complete_progress(telegram_task_id, file_name, success=True)
+                        )
                 MetaData.print_current_task_num(
                     prompt=_t(KeyWord.CURRENT_DOWNLOAD_TASK),
                     num=self.app.current_task_num,
@@ -2333,6 +2552,13 @@ class TelegramRestrictedMediaDownloader(Bot):
                         )
                     )
                 else:
+                    # 更新 Telegram 进度为失败
+                    if telegram_task_id and telegram_chat_id:
+                        tracker = self._get_progress_tracker(telegram_chat_id)
+                        if tracker:
+                            asyncio.create_task(
+                                tracker.complete_progress(telegram_task_id, file_name, success=False)
+                            )
                     _error = f"(达到最大重试次数:{self.app.max_download_retries}次)。"
                     console.log(
                         f"{_t(KeyWord.DOWNLOAD_TASK)}"

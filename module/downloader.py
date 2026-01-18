@@ -439,6 +439,70 @@ class TelegramRestrictedMediaDownloader(Bot):
 
             log.info(f"开始使用 yt-dlp 下载排行榜视频: {mp4_url}")
 
+            # 准备 Telegram 进度追踪
+            telegram_task_id = None
+            telegram_chat_id = None
+            tracker = None
+            display_filename = f"{video_id}.mp4"
+            try:
+                from_user = getattr(message, 'from_user', None)
+                if from_user:
+                    telegram_chat_id = getattr(from_user, 'id', None)
+                    if telegram_chat_id:
+                        tracker = self._get_progress_tracker(telegram_chat_id)
+                        if tracker:
+                            telegram_task_id = f"twitter_{video_id}_{int(time.time())}"
+                            await tracker.create_progress_message(
+                                telegram_task_id, display_filename
+                            )
+            except Exception as e:
+                log.debug(f"创建推特下载进度消息失败: {e}")
+
+            def progress_hook(d):
+                if d['status'] == 'downloading':
+                    if tracker and telegram_task_id:
+                        total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+                        downloaded = d.get('downloaded_bytes', 0)
+                        # Speed can be None sometimes
+                        speed = d.get('speed') or 0
+                        
+                        # 调度到主循环更新
+                        try:
+                            future = asyncio.run_coroutine_threadsafe(
+                                tracker.update_progress(
+                                    telegram_task_id,
+                                    display_filename,
+                                    downloaded,
+                                    total
+                                ),
+                                self.loop
+                            )
+                        except Exception:
+                            pass
+
+            # 构建代理配置
+            proxy_url = None
+            if self.app.enable_proxy and self.app.proxy:
+                try:
+                    p = self.app.proxy
+                    scheme = p.get('scheme', 'http')
+                    host = p.get('hostname')
+                    port = p.get('port')
+                    username = p.get('username')
+                    password = p.get('password')
+                    
+                    if host and port:
+                        auth = ""
+                        if username and password:
+                            auth = f"{username}:{password}@"
+                        elif username:
+                            auth = f"{username}@"
+                        
+                        proxy_url = f"{scheme}://{auth}{host}:{port}"
+                        log.info(f"配置 yt-dlp 代理: {scheme}://{host}:{port}")
+                except Exception as e:
+                    log.warning(f"构建代理配置失败: {e}")
+
             def run_yt_dlp():
                 ydl_opts = {
                     "outtmpl": output_template,
@@ -446,11 +510,14 @@ class TelegramRestrictedMediaDownloader(Bot):
                     "merge_output_format": "mp4",
                     "quiet": True,
                     "no_warnings": True,
-                    "socket_timeout": 60,
+                    "socket_timeout": 120,  # 增加超时时间到 120 秒
+                    "retries": 10,          # 增加重试次数
+                    "proxy": proxy_url,     # 使用应用代理
                     "http_headers": {
                         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                         "Referer": "https://twitter.com/",
                     },
+                    "progress_hooks": [progress_hook],
                 }
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([mp4_url])
@@ -458,10 +525,17 @@ class TelegramRestrictedMediaDownloader(Bot):
             # 在执行器中运行同步的 yt-dlp
             await self.loop.run_in_executor(None, run_yt_dlp)
 
+            # 下载成功完成通知
+            if tracker and telegram_task_id:
+                await tracker.complete_progress(telegram_task_id, display_filename, success=True)
+                
             log.info(f"下载成功: {expected_file}")
             return True
 
         except Exception as e:
+            # 下载失败完成通知
+            if tracker and telegram_task_id:
+                await tracker.complete_progress(telegram_task_id, display_filename, success=False)
             log.exception(f"下载排行榜视频出错 (yt-dlp): {url}, 原因: {e}")
             return False
 

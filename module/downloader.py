@@ -11,6 +11,7 @@ import re
 import json
 import shutil
 import aiohttp
+import yt_dlp
 
 from functools import partial
 from sqlite3 import OperationalError
@@ -223,60 +224,45 @@ class TelegramRestrictedMediaDownloader(Bot):
     async def _download_ranking_video(self, url: str, message: pyrogram.types.Message) -> bool:
         """下载 twitter-ero-video-ranking.com 视频"""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status != 200:
-                        log.error(f"请求失败: {url}, status={response.status}")
-                        return False
-                    html = await response.text()
-            
-            # 提取 MP4 链接
-            # 寻找 <a ... href="...mp4..." ...>
-            # 更新正则以支持带参数的 URL (例如 ?tag=14)
-            mp4_pattern = r'href="([^"]+\.mp4[^"]*)"'
-            match = re.search(mp4_pattern, html)
-            if not match:
-                log.warning(f"未找到 MP4 链接: {url}")
-                return False
-                
-            mp4_url = match.group(1)
             video_id = url.split('/')[-1]
             
             # 构建保存路径
-            # 使用 env_save_directory 解析占位符 (如 %CHAT_ID%)
             base_save_dir = self.env_save_directory(message)
             save_dir = os.path.join(base_save_dir, "TwitterRanking")
             if not os.path.exists(save_dir):
                 os.makedirs(save_dir)
             
-            file_path = os.path.join(save_dir, f"{video_id}.mp4")
+            # 输出文件名模板 (yt-dlp 风格)
+            # 注意: yt-dlp 会根据拓展名自动添加后缀，所以这里不加 .mp4
+            output_template = os.path.join(save_dir, f"{video_id}.%(ext)s")
             
-            if os.path.exists(file_path):
-                log.info(f"文件已存在，跳过: {file_path}")
+            # 检查文件是否已存在 (简单检查 mp4)
+            expected_file = os.path.join(save_dir, f"{video_id}.mp4")
+            if os.path.exists(expected_file):
+                log.info(f"文件已存在，跳过: {expected_file}")
                 return True
-                
-            log.info(f"开始下载排行榜视频: {mp4_url}")
+
+            log.info(f"开始使用 yt-dlp 下载排行榜视频: {url}")
             
-            # 使用 yt-dlp 下载 (更稳定)
-            # 或者直接 requests/aiohttp 下载? 既然有 yt-dlp 依赖，用 yt-dlp 最好
-            # 为了简单起见，这里先尝试用 aiohttp 下载流
-            async with aiohttp.ClientSession() as session:
-                async with session.get(mp4_url) as resp:
-                    if resp.status == 200:
-                        with open(file_path, 'wb') as f:
-                            while True:
-                                chunk = await resp.content.read(1024*1024)
-                                if not chunk:
-                                    break
-                                f.write(chunk)
-                        log.info(f"下载成功: {file_path}")
-                        return True
-                    else:
-                        log.error(f"下载视频流失败: {mp4_url}, status={resp.status}")
-                        return False
-                        
+            def run_yt_dlp():
+                ydl_opts = {
+                    'outtmpl': output_template,
+                    'format': 'bestvideo+bestaudio/best',
+                    'merge_output_format': 'mp4',
+                    'quiet': True,
+                    'no_warnings': True,
+                }
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+
+            # 在执行器中运行同步的 yt-dlp
+            await self.loop.run_in_executor(None, run_yt_dlp)
+            
+            log.info(f"下载成功: {expected_file}")
+            return True
+
         except Exception as e:
-            log.exception(f"下载排行榜视频出错: {url}, 原因: {e}")
+            log.exception(f"下载排行榜视频出错 (yt-dlp): {url}, 原因: {e}")
             return False
 
     def env_save_directory(self, message: pyrogram.types.Message) -> str:
@@ -370,7 +356,7 @@ class TelegramRestrictedMediaDownloader(Bot):
             # 若既不是 t.me 链接，又没有识别到外部站点，交由后续逻辑处理
             if not x_links and not ig_links and not iwara_links:
                 # 检查是否为 twitter-ero-video-ranking.com 链接
-                ranking_pattern = r"https?://(?:www\.)?twitter-ero-video-ranking\.com/zh-CN/movie/([a-zA-Z0-9]+)"
+                ranking_pattern = r"https?://(?:www\.)?twitter-ero-video-ranking\.com/zh-CN/movie/([a-zA-Z0-9_-]+)"
                 ranking_links = []
                 for p in parts:
                     if re.match(ranking_pattern, p):

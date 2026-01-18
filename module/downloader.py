@@ -582,6 +582,8 @@ class TelegramRestrictedMediaDownloader(Bot):
         )
 
         # 当父类无法解析(非 t.me 链接)时，尝试处理外部链接(X/Twitter、Instagram、Iwara)
+        request_chat_id = getattr(getattr(message, "chat", None), "id", None)
+
         if link_meta is None:
             text = (message.text or "").strip()
             # 提取 /download 后的参数
@@ -766,6 +768,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                                             message_ids=m,
                                             with_upload=with_upload,
                                             single_link=True,
+                                            request_chat_id=request_chat_id,
                                         )
                                         converter_success += 1
                                 else:
@@ -785,6 +788,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                                         message_ids=media_msg,
                                         with_upload=with_upload,
                                         single_link=True,
+                                        request_chat_id=request_chat_id,
                                     )
                                     converter_success += 1
                             except Exception as e:
@@ -880,7 +884,8 @@ class TelegramRestrictedMediaDownloader(Bot):
             return None
         for link in links:
             task: dict = await self.create_download_task(
-                message_ids=link, retry=None, with_upload=with_upload
+                message_ids=link, retry=None, with_upload=with_upload,
+                request_chat_id=request_chat_id
             )
             if task.get("status") == DownloadStatus.FAILURE:
                 invalid_link.add(link)
@@ -2313,6 +2318,7 @@ class TelegramRestrictedMediaDownloader(Bot):
         retry: dict,
         with_upload: Union[dict, None] = None,
         diy_download_type: Optional[list] = None,
+        telegram_chat_id: Optional[int] = None,
     ) -> None:
         retry_count = retry.get("count")
         retry_id = retry.get("id")
@@ -2328,6 +2334,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                             retry,
                             with_upload,
                             diy_download_type,
+                            telegram_chat_id=telegram_chat_id,
                         )
                         break
                 else:
@@ -2339,6 +2346,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                         retry,
                         with_upload,
                         diy_download_type,
+                        telegram_chat_id=telegram_chat_id,
                     )
         else:
             _task = None
@@ -2401,19 +2409,20 @@ class TelegramRestrictedMediaDownloader(Bot):
                 else:
                     # 准备 Telegram 进度追踪
                     telegram_task_id = None
-                    telegram_chat_id = None
+                    target_chat_id = telegram_chat_id
                     try:
-                        if isinstance(message, pyrogram.types.Message):
+                        if not target_chat_id and isinstance(message, pyrogram.types.Message):
                             from_user = getattr(message, 'from_user', None)
                             if from_user:
-                                telegram_chat_id = getattr(from_user, 'id', None)
-                                if telegram_chat_id:
-                                    tracker = self._get_progress_tracker(telegram_chat_id)
-                                    if tracker:
-                                        telegram_task_id = f"{file_id}_{int(time.time())}"
-                                        await tracker.create_progress_message(
-                                            telegram_task_id, file_name
-                                        )
+                                target_chat_id = getattr(from_user, 'id', None)
+                        
+                        if target_chat_id:
+                            tracker = self._get_progress_tracker(target_chat_id)
+                            if tracker:
+                                telegram_task_id = f"{file_id}_{int(time.time())}"
+                                await tracker.create_progress_message(
+                                    telegram_task_id, file_name
+                                )
                     except Exception as e:
                         log.debug(f"创建 Telegram 进度消息失败: {e}")
                     
@@ -2438,7 +2447,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                             progress_args=(sever_file_size, self.pb.progress, task_id),
                             compare_size=sever_file_size,
                             telegram_progress_task_id=telegram_task_id,
-                            telegram_chat_id=telegram_chat_id,
+                            telegram_chat_id=target_chat_id,
                         )
                     )
                     MetaData.print_current_task_num(
@@ -2688,6 +2697,7 @@ class TelegramRestrictedMediaDownloader(Bot):
         single_link: bool = False,
         with_upload: Union[dict, None] = None,
         diy_download_type: Optional[list] = None,
+        request_chat_id: Optional[int] = None,  # 用户请求聊天的 ID (用于进度通知)
     ) -> dict:
         retry = retry if retry else {"id": -1, "count": 0}
         diy_download_type = (
@@ -2713,7 +2723,14 @@ class TelegramRestrictedMediaDownloader(Bot):
             DownloadTask.set(link, "link_type", link_type)
             DownloadTask.set(link, "member_num", member_num)
             await self.__add_task(
-                chat_id, link_type, link, message, retry, with_upload, diy_download_type
+                chat_id,
+                link_type,
+                link,
+                message,
+                retry,
+                with_upload,
+                diy_download_type,
+                telegram_chat_id=request_chat_id,
             )
             return {
                 "chat_id": chat_id,

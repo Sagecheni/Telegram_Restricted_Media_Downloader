@@ -926,6 +926,30 @@ class Bot:
                     ),
                 )
             )
+            # 监听 Twitter Ranking 链接并交由 /download 逻辑处理
+            self.bot.add_handler(
+                MessageHandler(
+                    self.get_download_link_from_bot,
+                    filters=(
+                        pyrogram.filters.regex(
+                            r"^(?:https?://)?(?:www\.)?twitter-ero-video-ranking\.com/.*"
+                        )
+                        & pyrogram.filters.user(self.root)
+                    ),
+                )
+            )
+            # 监听 video.twimg.com 链接并交由 /download 逻辑处理
+            self.bot.add_handler(
+                MessageHandler(
+                    self.get_download_link_from_bot,
+                    filters=(
+                        pyrogram.filters.regex(
+                            r"^(?:https?://)?video\.twimg\.com/.*"
+                        )
+                        & pyrogram.filters.user(self.root)
+                    ),
+                )
+            )
             self.bot.add_handler(
                 CallbackQueryHandler(
                     self.callback_data, filters=pyrogram.filters.user(self.root)

@@ -3,85 +3,92 @@
 # Software:PyCharm
 # Time:2023/10/3 1:00:03
 # File:downloader.py
-import os
-import sys
 import asyncio
 import datetime
-import re
 import json
+import os
+import re
 import shutil
-import aiohttp
-import yt_dlp
-
+import sys
 from functools import partial
 from sqlite3 import OperationalError
-from typing import Union, Callable, Optional, Dict, Iterable, Tuple
+from typing import Callable, Dict, Iterable, Optional, Tuple, Union
 
+import aiohttp
 import pyrogram
+import yt_dlp
 from pyrogram.enums.parse_mode import ParseMode
 from pyrogram.errors.exceptions.bad_request_400 import (
-    MsgIdInvalid,
-    UsernameInvalid,
-    ChannelInvalid,
     BotMethodInvalid,
-    UsernameNotOccupied,
-    PeerIdInvalid,
+    ChannelInvalid,
+)
+from pyrogram.errors.exceptions.bad_request_400 import (
     ChannelPrivate as ChannelPrivate_400,
+)
+from pyrogram.errors.exceptions.bad_request_400 import (
     ChatForwardsRestricted as ChatForwardsRestricted_400,
 )
+from pyrogram.errors.exceptions.bad_request_400 import (
+    MsgIdInvalid,
+    PeerIdInvalid,
+    UsernameInvalid,
+    UsernameNotOccupied,
+)
+from pyrogram.errors.exceptions.forbidden_403 import ChatWriteForbidden
 from pyrogram.errors.exceptions.not_acceptable_406 import (
     ChannelPrivate as ChannelPrivate_406,
+)
+from pyrogram.errors.exceptions.not_acceptable_406 import (
     ChatForwardsRestricted as ChatForwardsRestricted_406,
 )
 from pyrogram.errors.exceptions.unauthorized_401 import (
-    SessionRevoked,
     AuthKeyUnregistered,
     SessionExpired,
+    SessionRevoked,
     Unauthorized,
 )
-from pyrogram.errors.exceptions.forbidden_403 import ChatWriteForbidden
 from pyrogram.handlers import MessageHandler
-from pyrogram.types.messages_and_media import ReplyParameters
 from pyrogram.types.bots_and_keyboards import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.types.messages_and_media import ReplyParameters
 
-from module import console, log, LINK_PREVIEW_OPTIONS, SLEEP_THRESHOLD
-from module.filter import Filter
+from module import LINK_PREVIEW_OPTIONS, SLEEP_THRESHOLD, console, log
 from module.app import Application
-from module.bot import Bot, KeyboardButton, CallbackData
+from module.bot import Bot, CallbackData, KeyboardButton
 from module.enums import (
-    DownloadStatus,
-    LinkType,
-    KeyWord,
-    BotCallbackText,
     BotButton,
+    BotCallbackText,
     BotMessage,
-    DownloadType,
     CalenderKeyboard,
+    DownloadStatus,
+    DownloadType,
+    KeyWord,
+    LinkType,
     SaveDirectoryPrefix,
 )
+from module.filter import Filter
 from module.language import _t
 from module.path_tool import (
-    is_file_duplicate,
-    safe_delete,
-    get_file_size,
-    split_path,
     compare_file_size,
+    get_file_size,
+    is_file_duplicate,
     move_to_save_directory,
+    safe_delete,
     safe_replace,
+    split_path,
 )
+from module.stdio import Base64Image, MetaData, ProgressBar
 from module.task import DownloadTask
-from module.stdio import ProgressBar, Base64Image, MetaData
 from module.uploader import TelegramUploader
 from module.util import (
-    parse_link,
+    Issues,
+    canonical_link_message,
+    canonical_link_str,
     format_chat_link,
-    get_message_by_link,
     get_chat_with_notify,
+    get_message_by_link,
+    parse_link,
     safe_message,
     truncate_display_filename,
-    Issues,
-    canonical_link_str,
-    canonical_link_message,
 )
 
 
@@ -163,7 +170,7 @@ class TelegramRestrictedMediaDownloader(Bot):
             )
 
             async def _log_stream(stream, is_stderr: bool = False) -> None:
-                """实时读取并记录子进程输出。
+                """实时读取并记录子进程输出。.
 
                 说明:
                 - gallery-dl 的进度条通常通过带 \\r 的单行刷新输出;
@@ -221,21 +228,23 @@ class TelegramRestrictedMediaDownloader(Bot):
             )
         return False
 
-    async def _download_ranking_video(self, url: str, message: pyrogram.types.Message) -> bool:
+    async def _download_ranking_video(
+        self, url: str, message: pyrogram.types.Message
+    ) -> bool:
         """下载 twitter-ero-video-ranking.com 视频"""
         try:
-            video_id = url.split('/')[-1]
-            
+            video_id = url.split("/")[-1]
+
             # 构建保存路径
             base_save_dir = self.env_save_directory(message)
             save_dir = os.path.join(base_save_dir, "TwitterRanking")
             if not os.path.exists(save_dir):
                 os.makedirs(save_dir)
-            
+
             # 输出文件名模板 (yt-dlp 风格)
             # 注意: yt-dlp 会根据拓展名自动添加后缀，所以这里不加 .mp4
             output_template = os.path.join(save_dir, f"{video_id}.%(ext)s")
-            
+
             # 检查文件是否已存在 (简单检查 mp4)
             expected_file = os.path.join(save_dir, f"{video_id}.mp4")
             if os.path.exists(expected_file):
@@ -243,25 +252,25 @@ class TelegramRestrictedMediaDownloader(Bot):
                 return True
 
             log.info(f"开始使用 yt-dlp 下载排行榜视频: {url}")
-            
+
             def run_yt_dlp():
                 ydl_opts = {
-                    'outtmpl': output_template,
-                    'format': 'bestvideo+bestaudio/best',
-                    'merge_output_format': 'mp4',
-                    'quiet': True,
-                    'no_warnings': True,
-                    'http_headers': {
-                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                        'Referer': 'https://twitter-ero-video-ranking.com/',
-                    }
+                    "outtmpl": output_template,
+                    "format": "bestvideo+bestaudio/best",
+                    "merge_output_format": "mp4",
+                    "quiet": True,
+                    "no_warnings": True,
+                    "http_headers": {
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Referer": "https://twitter.com/",
+                    },
                 }
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([url])
 
             # 在执行器中运行同步的 yt-dlp
             await self.loop.run_in_executor(None, run_yt_dlp)
-            
+
             log.info(f"下载成功: {expected_file}")
             return True
 
@@ -365,27 +374,29 @@ class TelegramRestrictedMediaDownloader(Bot):
                 for p in parts:
                     if re.match(ranking_pattern, p):
                         ranking_links.append(p)
-                
+
                 if ranking_links:
                     status_msg = await self.safe_process_message(
                         client=client,
                         message=message,
-                        text=[f"🔄 检测到排行榜链接，正在下载 {len(ranking_links)} 个视频..."],
+                        text=[
+                            f"🔄 检测到排行榜链接，正在下载 {len(ranking_links)} 个视频..."
+                        ],
                     )
                     success_count = 0
                     fail_links = []
-                    
+
                     for link in ranking_links:
                         if await self._download_ranking_video(link, message):
                             success_count += 1
                         else:
                             fail_links.append(link)
-                            
+
                     summary = [f"✅ 排行榜视频下载完成: 成功 {success_count} 个"]
                     if fail_links:
                         summary.append("❌ 以下链接下载失败:")
                         summary.extend(fail_links)
-                        
+
                     await self.safe_edit_message(
                         client=client,
                         message=message,
@@ -911,7 +922,9 @@ class TelegramRestrictedMediaDownloader(Bot):
                 u_s: str = "禁用" if param else "开启"
                 u_p: str = ""
                 if _param == "delete":
-                    u_p: str = f'遇到"受限转发"时,下载后上传并"删除上传完成的本地文件"的行为已{u_s}。'
+                    u_p: str = (
+                        f'遇到"受限转发"时,下载后上传并"删除上传完成的本地文件"的行为已{u_s}。'
+                    )
                 elif _param == "download_upload":
                     u_p: str = f'遇到"受限转发"时,下载后上传已{u_s}。'
                 console.log(u_p, style="#FF4689")
@@ -1182,9 +1195,11 @@ class TelegramRestrictedMediaDownloader(Bot):
                 # 返回或点击。
                 await callback_query.message.edit_text(
                     text=_filter_prompt(),
-                    reply_markup=kb.download_chat_filter_button()
-                    if callback_data == BotCallbackText.DOWNLOAD_CHAT_FILTER
-                    else kb.filter_date_range_button(),
+                    reply_markup=(
+                        kb.download_chat_filter_button()
+                        if callback_data == BotCallbackText.DOWNLOAD_CHAT_FILTER
+                        else kb.filter_date_range_button()
+                    ),
                 )
             elif callback_data in (
                 BotCallbackText.FILTER_START_DATE,
@@ -1211,9 +1226,9 @@ class TelegramRestrictedMediaDownloader(Bot):
                 current_index = step_sequence.index(current_step)
                 next_index = (current_index + 1) % len(step_sequence)
                 new_step = step_sequence[next_index]
-                self.download_chat_filter[chat_id]["date_range"]["adjust_step"] = (
-                    new_step
-                )
+                self.download_chat_filter[chat_id]["date_range"][
+                    "adjust_step"
+                ] = new_step
                 current_date = datetime.datetime.fromtimestamp(
                     self.download_chat_filter[chat_id]["date_range"][f"{dtype}_date"]
                 ).strftime("%Y-%m-%d %H:%M:%S")
@@ -1538,15 +1553,15 @@ class TelegramRestrictedMediaDownloader(Bot):
                         text=safe_message(BotMessage.INVALID),
                     )
                     for i in invalid_id:
-                        last_message: Union[
-                            pyrogram.types.Message, str, None
-                        ] = await self.safe_edit_message(
-                            client=client,
-                            message=message,
-                            last_message_id=last_message.id,
-                            text=safe_message(
-                                f"{last_message.text}\n{format_chat_link(origin_link, topic=origin_chat.is_forum)}/{i}"
-                            ),
+                        last_message: Union[pyrogram.types.Message, str, None] = (
+                            await self.safe_edit_message(
+                                client=client,
+                                message=message,
+                                last_message_id=last_message.id,
+                                text=safe_message(
+                                    f"{last_message.text}\n{format_chat_link(origin_link, topic=origin_chat.is_forum)}/{i}"
+                                ),
+                            )
                         )
                 last_message = await self.safe_edit_message(
                     client=client,
@@ -1612,9 +1627,11 @@ class TelegramRestrictedMediaDownloader(Bot):
                     [
                         InlineKeyboardButton(
                             BotButton.OK,
-                            callback_data=f"{BotCallbackText.REMOVE_LISTEN_DOWNLOAD} {link}"
-                            if command == "/listen_download"
-                            else BotCallbackText.REMOVE_LISTEN_FORWARD,
+                            callback_data=(
+                                f"{BotCallbackText.REMOVE_LISTEN_DOWNLOAD} {link}"
+                                if command == "/listen_download"
+                                else BotCallbackText.REMOVE_LISTEN_FORWARD
+                            ),
                         ),
                         InlineKeyboardButton(
                             BotButton.CANCEL, callback_data=BotCallbackText.NULL
@@ -1711,31 +1728,31 @@ class TelegramRestrictedMediaDownloader(Bot):
                     link, self.listen_download_chat, self.listen_download
                 ):
                     if not last_message:
-                        last_message: Union[
-                            pyrogram.types.Message, str, None
-                        ] = await client.send_message(
-                            chat_id=message.from_user.id,
-                            reply_parameters=ReplyParameters(message_id=message.id),
-                            link_preview_options=LINK_PREVIEW_OPTIONS,
-                            text=f"✅新增`监听下载频道`频道:\n",
+                        last_message: Union[pyrogram.types.Message, str, None] = (
+                            await client.send_message(
+                                chat_id=message.from_user.id,
+                                reply_parameters=ReplyParameters(message_id=message.id),
+                                link_preview_options=LINK_PREVIEW_OPTIONS,
+                                text=f"✅新增`监听下载频道`频道:\n",
+                            )
                         )
-                    last_message: Union[
-                        pyrogram.types.Message, str, None
-                    ] = await self.safe_edit_message(
-                        client=client,
-                        message=message,
-                        last_message_id=last_message.id,
-                        text=safe_message(f"{last_message.text}\n{link}"),
-                        reply_markup=InlineKeyboardMarkup(
-                            [
+                    last_message: Union[pyrogram.types.Message, str, None] = (
+                        await self.safe_edit_message(
+                            client=client,
+                            message=message,
+                            last_message_id=last_message.id,
+                            text=safe_message(f"{last_message.text}\n{link}"),
+                            reply_markup=InlineKeyboardMarkup(
                                 [
-                                    InlineKeyboardButton(
-                                        BotButton.LOOKUP_LISTEN_INFO,
-                                        callback_data=BotCallbackText.LOOKUP_LISTEN_INFO,
-                                    )
+                                    [
+                                        InlineKeyboardButton(
+                                            BotButton.LOOKUP_LISTEN_INFO,
+                                            callback_data=BotCallbackText.LOOKUP_LISTEN_INFO,
+                                        )
+                                    ]
                                 ]
-                            ]
-                        ),
+                            ),
+                        )
                     )
                     p = f'已新增监听下载,频道链接:"{link}"。'
                     console.log(p, style="#FF4689")
@@ -2605,14 +2622,19 @@ class TelegramRestrictedMediaDownloader(Bot):
             self.loop.run_until_complete(self.__download_media_from_links())
         except KeyError as e:
             record_error: bool = True
-            if str(e) == '0':
-                log.error('「网络」或「代理问题」,在确保当前网络连接正常情况下检查:\n「VPN」是否可用,「软件代理」是否配置正确。')
+            if str(e) == "0":
+                log.error(
+                    "「网络」或「代理问题」,在确保当前网络连接正常情况下检查:\n「VPN」是否可用,「软件代理」是否配置正确。"
+                )
                 console.print(Issues.PROXY_NOT_CONFIGURED)
                 raise SystemExit(0)
             log.exception(f'运行出错,{_t(KeyWord.REASON)}:"{e}"')
         except pyrogram.errors.BadMsgNotification as e:
             record_error: bool = True
-            if str(e) in (str(pyrogram.errors.BadMsgNotification(16)), str(pyrogram.errors.BadMsgNotification(17))):
+            if str(e) in (
+                str(pyrogram.errors.BadMsgNotification(16)),
+                str(pyrogram.errors.BadMsgNotification(17)),
+            ):
                 console.print(Issues.SYSTEM_TIME_NOT_SYNCHRONIZED)
                 raise SystemExit(0)
             log.exception(f'运行出错,{_t(KeyWord.REASON)}:"{e}"')
@@ -2658,7 +2680,9 @@ class TelegramRestrictedMediaDownloader(Bot):
                     export=self.gc.get_config("export_table").get("count")
                 )
                 MetaData.pay()
-                self.app.process_shutdown(60) if len(
-                    self.running_log
-                ) == 2 else None  # v1.2.8如果并未打开客户端执行任何下载,则不执行关机。
+                (
+                    self.app.process_shutdown(60)
+                    if len(self.running_log) == 2
+                    else None
+                )  # v1.2.8如果并未打开客户端执行任何下载,则不执行关机。
             self.app.ctrl_c()

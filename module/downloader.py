@@ -233,6 +233,28 @@ class TelegramRestrictedMediaDownloader(Bot):
     ) -> bool:
         """下载 twitter-ero-video-ranking.com 视频"""
         try:
+            # 1. Manually fetch HTML to find the video link
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": "https://twitter.com/",
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as response:
+                    if response.status != 200:
+                        log.error(f"请求排行榜页面失败: {url}, status={response.status}")
+                        return False
+                    html = await response.text()
+
+            # 2. Extract MP4 link manually (to handle resolution variations robustly)
+            mp4_pattern = r'href="([^"]+\.mp4[^"]*)"'
+            match = re.search(mp4_pattern, html)
+            if not match:
+                log.warning(f"未找到 MP4 链接: {url}")
+                return False
+
+            mp4_url = match.group(1)
+            log.info(f"解析到视频链接: {mp4_url}")
+
             video_id = url.split("/")[-1]
 
             # 构建保存路径
@@ -242,7 +264,6 @@ class TelegramRestrictedMediaDownloader(Bot):
                 os.makedirs(save_dir)
 
             # 输出文件名模板 (yt-dlp 风格)
-            # 注意: yt-dlp 会根据拓展名自动添加后缀，所以这里不加 .mp4
             output_template = os.path.join(save_dir, f"{video_id}.%(ext)s")
 
             # 检查文件是否已存在 (简单检查 mp4)
@@ -251,7 +272,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                 log.info(f"文件已存在，跳过: {expected_file}")
                 return True
 
-            log.info(f"开始使用 yt-dlp 下载排行榜视频: {url}")
+            log.info(f"开始使用 yt-dlp 下载排行榜视频: {mp4_url}")
 
             def run_yt_dlp():
                 ydl_opts = {
@@ -266,7 +287,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                     },
                 }
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
+                    ydl.download([mp4_url])
 
             # 在执行器中运行同步的 yt-dlp
             await self.loop.run_in_executor(None, run_yt_dlp)

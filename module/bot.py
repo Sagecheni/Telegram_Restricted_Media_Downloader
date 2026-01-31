@@ -4,6 +4,7 @@
 # Time:2025/1/24 21:27
 # File:bot.py
 import os
+import re
 import copy
 import asyncio
 import datetime
@@ -267,11 +268,12 @@ class Bot:
             await client.send_message(
                 chat_id=message.from_user.id,
                 reply_parameters=ReplyParameters(message_id=message.id),
-                text="❓❓❓请提供下载链接❓❓❓语法:\n`/download_chat https://t.me/x/x`",
+                text="❓❓❓请提供下载链接❓❓❓语法:\n"
+                "`/download_chat https://t.me/x/x [关键词1 关键词2]`",
                 link_preview_options=LINK_PREVIEW_OPTIONS,
             )
         command = text.split()
-        if len(command) != 2:
+        if len(command) < 2:
             await self.help(client, message)
             await client.send_message(
                 chat_id=message.from_user.id,
@@ -281,6 +283,23 @@ class Bot:
             )
             return None
         chat_link = command[1]
+        keywords: list = []
+        if len(command) > 2:
+            raw_keywords = command[2:]
+            for token in raw_keywords:
+                for kw in re.split(r"[,，;；|]", token):
+                    kw = kw.strip()
+                    if kw:
+                        keywords.append(kw)
+            if keywords:
+                seen = set()
+                unique_keywords = []
+                for kw in keywords:
+                    if kw in seen:
+                        continue
+                    seen.add(kw)
+                    unique_keywords.append(kw)
+                keywords = unique_keywords
         try:
             meta = await parse_link(client=self.user, link=chat_link)
         except ValueError:
@@ -321,18 +340,21 @@ class Bot:
                 "voice": True,
                 "animation": True,
             },
+            "keywords": keywords,
         }
         log.info(
             f'"{BotCallbackText.DOWNLOAD_CHAT_ID}"已添加至{self.download_chat_filter}。'
         )
         format_dtype = ",".join([_t(_) for _ in DownloadType()])
+        keywords_text = "、".join(keywords) if keywords else "无（将下载所有消息）"
         await client.send_message(
             chat_id=message.from_user.id,
             reply_parameters=ReplyParameters(message_id=message.id),
             text=f"💬下载频道:`{chat_id}`\n"
             f"⏮️当前选择的起始日期为:未定义\n"
             f"⏭️当前选择的结束日期为:未定义\n"
-            f"📝当前选择的下载类型为:{format_dtype}",
+            f"📝当前选择的下载类型为:{format_dtype}\n"
+            f"🔑当前选择的关键词为:{keywords_text}",
             reply_markup=KeyboardButton.download_chat_filter_button(),
             link_preview_options=LINK_PREVIEW_OPTIONS,
         )

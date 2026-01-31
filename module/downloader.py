@@ -548,6 +548,23 @@ class TelegramRestrictedMediaDownloader(Bot):
                         placeholder,
                         str(getattr(getattr(message, "chat"), "id", "UNKNOWN_CHAT_ID")),
                     )
+                if placeholder == SaveDirectoryPrefix.CHAT_USERNAME:
+                    from module.path_tool import validate_title
+                    chat = getattr(message, "chat", None)
+                    if chat:
+                        username = getattr(chat, "username", None)
+                        title = getattr(chat, "title", None)
+                        chat_id = getattr(chat, "id", None)
+                        if username and isinstance(username, str) and username.strip():
+                            channel_name = validate_title(username.strip())
+                        elif title and isinstance(title, str) and title.strip():
+                            channel_name = validate_title(title.strip())
+                        else:
+                            channel_name = str(chat_id) if chat_id else "UNKNOWN_CHAT"
+                        save_directory = save_directory.replace(
+                            placeholder,
+                            channel_name
+                        )
                 if placeholder == SaveDirectoryPrefix.MIME_TYPE:
                     for dtype in DownloadType():
                         if getattr(message, dtype, None):
@@ -1402,13 +1419,23 @@ class TelegramRestrictedMediaDownloader(Bot):
                         _download_type.append(_t(_dtype))
                 return ",".join(_download_type)
 
+            def _get_keywords_text():
+                keywords = self.download_chat_filter[chat_id].get("keywords", [])
+                return "无（将下载所有消息）" if not keywords else "、".join(keywords)
+
             def _remove_chat_id(_chat_id):
                 if _chat_id in self.download_chat_filter:
                     self.download_chat_filter.pop(_chat_id)
                     log.info(f'"{_chat_id}"已从{self.download_chat_filter}中移除。')
 
             def _filter_prompt():
-                return f"💬下载频道:`{chat_id}`\n⏮️当前选择的起始日期为:{_get_update_time()[0]}\n⏭️当前选择的结束日期为:{_get_update_time()[1]}\n📝当前选择的下载类型为:{_get_format_dtype()}"
+                return (
+                    f"💬下载频道:`{chat_id}`\n"
+                    f"⏮️当前选择的起始日期为:{_get_update_time()[0]}\n"
+                    f"⏭️当前选择的结束日期为:{_get_update_time()[1]}\n"
+                    f"📝当前选择的下载类型为:{_get_format_dtype()}\n"
+                    f"🔑当前选择的关键词为:{_get_keywords_text()}"
+                )
 
             async def _verification_time(_start_time, _end_time) -> bool:
                 if isinstance(_start_time, datetime.datetime) and isinstance(
@@ -1614,9 +1641,45 @@ class TelegramRestrictedMediaDownloader(Bot):
                         "下载类型设置失败\n(具体原因请前往终端查看报错信息)"
                     )
                     log.error(
-                        f'下载类型设置失败,{_t(KeyWord.REASON)}:"{e}"', exc_info=True
+                        f'下载类型设置失败,{_t(KeyWord.REASON)}:"{e}"'
                     )
-
+            elif callback_data == BotCallbackText.DOWNLOAD_CHAT_KEYWORDS_FILTER:
+                # 关键词设置
+                chat_id = BotCallbackText.DOWNLOAD_CHAT_ID
+                keywords = self.download_chat_filter.get(chat_id, {}).get("keywords", [])
+                
+                if not keywords:
+                    await callback_query.message.edit_text(
+                        text=f"💬下载频道:`{chat_id}`\n"
+                        f"⏮️当前选择的关键词为:无（将下载所有消息）",
+                        reply_markup=kb.single_button(
+                            text=BotButton.RETURN,
+                            callback_data=BotCallbackText.DOWNLOAD_CHAT_FILTER,
+                        ),
+                    )
+                else:
+                    keywords_str = "、".join(keywords)
+                    await callback_query.message.edit_text(
+                        text=f"💬下载频道:`{chat_id}`\n"
+                        f"⏮️当前选择的关键词为:{keywords_str}",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton(
+                                text=BotButton.CANCEL,
+                                callback_data=BotCallbackText.DOWNLOAD_CHAT_FILTER,
+                            )],
+                            [
+                                InlineKeyboardButton(
+                                    text="➕添加关键词",
+                                    callback_data=f"add_keyword_{chat_id}",
+                                ),
+                                InlineKeyboardButton(
+                                    text="➖删除关键词",
+                                    callback_data=f"remove_keyword_{chat_id}",
+                                ),
+                            ],
+                        ]),
+                    )
+                    log.info(f"关键词设置页面,频道:{chat_id}, 关键词:{keywords}")
     async def forward(
         self,
         client: pyrogram.Client,
@@ -2056,14 +2119,27 @@ class TelegramRestrictedMediaDownloader(Bot):
         self, client: pyrogram.Client, message: pyrogram.types.Message
     ):
         try:
-            # 若该监听频道设置了标签, 为当前消息链接记录标签
-            try:
-                _chat_id = getattr(getattr(message, "chat", None), "id", None)
-                _tag = self.listen_download_tag_by_chatid.get(_chat_id)
-                if _tag and getattr(message, "link", None):
-                    self.link_tag_map[message.link] = _tag
-            except Exception:
-                pass
+            # 获取标签作为关键词
+            _filter = Filter()
+            _chat_id = getattr(getattr(message, "chat", None), "id", None)
+            _tag = self.listen_download_tag_by_chatid.get(_chat_id)
+            
+            # 如果标签存在，检查消息是否包含关键词（标签）
+            if _tag and getattr(message, "link", None):
+                # 标签可能是一个或多个，逗号分隔
+                keywords = [_tag] if isinstance(_tag, str) else _tag
+                keywords = [k.strip() for k in keywords if k.strip()]
+                
+                # 应用关键词过滤
+                if not _filter.keywords(message, keywords):
+                    # 消息不包含关键词，跳过下载
+                    log.debug(f'消息{message.link}不包含关键词{keywords}，跳过下载。')
+                    return
+                
+                # 记录标签
+                self.link_tag_map[message.link] = _tag
+                log.info(f'消息{message.link}包含关键词{keywords}，准备下载。')
+            
             await self.create_download_task(message_ids=message.link, single_link=True)
         except Exception as e:
             log.exception(f"监听下载出现错误,{_t(KeyWord.REASON)}:{e}")
@@ -2674,13 +2750,14 @@ class TelegramRestrictedMediaDownloader(Bot):
         start_date = date_filter.get("start_date")
         end_date = date_filter.get("end_date")
         download_type: dict = download_chat_filter.get("download_type")
+        keywords: list = download_chat_filter.get("keywords", [])
         links: list = []
         async for message in self.app.client.get_chat_history(
             chat_id=chat_id, reverse=True
         ):
             if _filter.date_range(message, start_date, end_date) and _filter.dtype(
                 message, download_type
-            ):
+            ) and _filter.keywords(message, keywords):
                 links.append(message.link if message.link else message)
         for link in links:
             await self.create_download_task(

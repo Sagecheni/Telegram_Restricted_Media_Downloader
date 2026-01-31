@@ -65,6 +65,7 @@ class CalenderKeyboard:
 
 class SaveDirectoryPrefix:
     CHAT_ID: str = "%CHAT_ID%"
+    CHAT_USERNAME: str = "%CHAT_USERNAME%"
     MIME_TYPE: str = "%MIME_TYPE%"
 
     def __iter__(self):
@@ -1200,7 +1201,7 @@ class BotCommandText:
     UPLOAD: tuple = ("upload", "上传本地的文件到指定频道。`/upload 本地文件 目标频道`")
     DOWNLOAD_CHAT: tuple = (
         "download_chat",
-        "下载指定频道并支持通过内联键盘自定义内容过滤。`/download_chat 频道链接`",
+        "下载指定频道并支持通过内联键盘自定义内容过滤。`/download_chat 频道链接 [关键词...]`",
     )
 
     @staticmethod
@@ -1251,6 +1252,7 @@ class BotCallbackText:
     DOWNLOAD_CHAT_FILTER: str = "download_chat_filter"
     DOWNLOAD_CHAT_DATE_FILTER: str = "download_chat_date_filter"
     DOWNLOAD_CHAT_DTYPE_FILTER: str = "download_chat_dtype_filter"
+    DOWNLOAD_CHAT_KEYWORDS_FILTER: str = "download_chat_keywords_filter"
     TOGGLE_DOWNLOAD_CHAT_DTYPE_VIDEO: str = "toggle_download_chat_video"
     TOGGLE_DOWNLOAD_CHAT_DTYPE_PHOTO: str = "toggle_download_chat_photo"
     TOGGLE_DOWNLOAD_CHAT_DTYPE_AUDIO: str = "toggle_download_chat_audio"
@@ -1328,6 +1330,7 @@ class BotButton:
     DOCUMENT_OFF: str = "📄文档 ❌"
     TEXT_OFF: str = "💬文本消息 ❌"
     DATE_RANGE_SETTING: str = "📅设置日期范围"
+    KEYWORDS_SETTING: str = "🔑设置关键词"
     SELECT_START_DATE: str = "⏮️选择起始日期"
     SELECT_END_DATE: str = "⏭️选择结束日期"
     DOWNLOAD_DTYPE_SETTING: str = "📝下载类型设置"

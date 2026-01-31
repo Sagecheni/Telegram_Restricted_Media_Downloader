@@ -174,7 +174,7 @@ Github:[点击跳转下载](https://github.com/Gentlesprite/Telegram_Restricted_
    | `/listen_forward`  | `/listen_forward https://t.me/A https://t.me/B`              | **实时**监听**频道A**的**最新消息**(任意消息)转发至**频道B**。但当**频道A**为**私密频道**时候无法转发。 |
    | `/listen_info`     | 向机器人发送`/listen_info`即可。                             | 查看当前已经创建的监听信息。                                 |
    | `/upload`          | `/upload` `本地文件` `目标频道`                              | 上传**本地的文件**到**指定频道**。                           |
-   | `/download_chat`   | `/download_chat 频道链接`                                    | 下载**指定频道**并支持**通过内联键盘自定义内容过滤**。       |
+   | `/download_chat`   | `/download_chat 频道链接 [关键词...]`                         | 下载**指定频道**并支持**通过内联键盘自定义内容过滤**，可选关键词过滤。 |
 
 6. `/help`命令使用教程，如下图所示：
 
@@ -386,7 +386,8 @@ Github:[点击跳转下载](https://github.com/Gentlesprite/Telegram_Restricted_
 - `/download_chat`下载指定频道。
    
    - 与`/download`不同的是：`/download_chat`支持通过机器人发送的内联键盘进行自定义内容过滤。
-   - 目前该功能支持按日期范围、文件类型来过滤要下载的内容。
+   - 可在命令中直接追加关键词，多个关键词可用空格或逗号分隔。
+   - 目前内联键盘仅支持按日期范围、文件类型来过滤要下载的内容。
    - 使用该命令后，**需要通过操作机器人回复中的内联键盘**，来设置过滤器、执行任务或取消任务。
    - 需要注意的是，在上一个`/download_chat`命令任务未执行或取消前，无法发起新的`/download_chat`命令来创建下载任务。
    - 自版本`≥v1.7.5`起，`/download_chat`命令创建的下载任务过滤条件将完全遵循用户在内联键盘中的设置，意味着该不会遵循配置文件中的任何规则（例如配置文件中的下载文件类型设置）。
@@ -394,6 +395,8 @@ Github:[点击跳转下载](https://github.com/Gentlesprite/Telegram_Restricted_
   
     ```bash
    /download_chat 频道链接
+   /download_chat 频道链接 关键词1 关键词2
+   /download_chat 频道链接 关键词1,关键词2
    ```
 - 发送命令后，设置过滤器为可选操作，但必须**手动点击**"执行任务"或"取消任务"以继续或终止流程，否则该命令将**始终处于等待状态，并阻塞新的`/download_chat`命令。**
 

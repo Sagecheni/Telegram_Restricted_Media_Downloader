@@ -2752,17 +2752,45 @@ class TelegramRestrictedMediaDownloader(Bot):
         download_type: dict = download_chat_filter.get("download_type")
         keywords: list = download_chat_filter.get("keywords", [])
         links: list = []
+        media_group_ids: set = set()
         async for message in self.app.client.get_chat_history(
             chat_id=chat_id, reverse=True
         ):
+            media_group_id = getattr(message, "media_group_id", None)
+            if media_group_id:
+                if media_group_id in media_group_ids:
+                    continue
+                media_group_ids.add(media_group_id)
+                try:
+                    group_messages = await message.get_media_group()
+                except Exception:
+                    group_messages = [message]
+                if not _filter.date_range(message, start_date, end_date):
+                    continue
+                if not any(_filter.dtype(m, download_type) for m in group_messages):
+                    continue
+                if keywords and not any(
+                    _filter.keywords(m, keywords) for m in group_messages
+                ):
+                    continue
+                if getattr(message, "link", None):
+                    links.append({"link": message.link, "single_link": False})
+                else:
+                    links.append({"link": message, "single_link": True})
+                continue
             if _filter.date_range(message, start_date, end_date) and _filter.dtype(
                 message, download_type
             ) and _filter.keywords(message, keywords):
-                links.append(message.link if message.link else message)
-        for link in links:
+                links.append(
+                    {
+                        "link": message.link if message.link else message,
+                        "single_link": True,
+                    }
+                )
+        for item in links:
             await self.create_download_task(
-                message_ids=link,
-                single_link=True,
+                message_ids=item.get("link"),
+                single_link=item.get("single_link", True),
                 diy_download_type=[_ for _ in DownloadType()],
             )
 

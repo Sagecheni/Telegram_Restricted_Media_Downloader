@@ -5,26 +5,25 @@ services:
     image: gentlesprite/telegram_restricted_media_downloader:latest
     container_name: trmd
     restart: unless-stopped
-    stdin_open: true  # 保持 stdin 开放，支持交互。
-    tty: true         # 分配伪终端，支持交互式输入。
+    stdin_open: true # 保持 stdin 开放，支持交互。
+    tty: true # 分配伪终端，支持交互式输入。
     volumes:
       # 挂载配置目录（容器内:/app/TRMD, 由XDG_CONFIG_HOME=/app和软件名TRMD组成）。
-      - ./config:/app/TRMD
+      - /mnt/cache/trmd/config:/app/TRMD
       # 挂载session目录（用于存放 Telegram 登录会话文件）。
       # 如果已有session文件，直接放到./sessions/目录即可。
-      - ./sessions:/app/sessions
+      - /mnt/cache/trmd/sessions:/app/sessions
       # 挂载下载目录（根据你的配置文件中的save_directory设置）。
-      # 方式1:使用当前目录下的downloads文件夹（默认）。
-      - ./downloads:/app/downloads
-      # 方式2:挂载外部目录（NAS 共享目录或其他外部存储）。
-      # 示例：挂载NAS的共享目录。
-      # - /volume1/Media/Telegram:/app/downloads。
+      # 当前使用外部 NAS 共享目录。
+      - /mnt/user/Sage-NAS/Downloads/Telegram:/app/downloads
+      # 备用示例：如需改回缓存盘目录，可使用下面这一行替换上面的挂载。
+      # - /mnt/cache/trmd/downloads:/app/downloads
       # 示例：挂载其他外部存储。
-      # - /mnt/external_drive/telegram:/app/downloads。
+      # - /mnt/external_drive/telegram:/app/downloads
       # 挂载临时缓存目录。
-      - ./temp:/app/temp
+      - /mnt/cache/trmd/temp:/app/temp
       # 如果需要挂载链接文件，取消下面的注释。
-      # - ./links.txt:/app/links.txt
+      # - /mnt/cache/trmd/links.txt:/app/links.txt
     environment:
       # 设置时区。
       - TZ=Asia/Shanghai

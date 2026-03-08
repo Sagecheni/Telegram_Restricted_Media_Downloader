@@ -8,6 +8,7 @@ import sys
 import random
 import asyncio
 import datetime
+import sqlite3
 
 from functools import partial
 from sqlite3 import OperationalError
@@ -85,6 +86,7 @@ from module.path_tool import (
     safe_replace
 )
 from module.task import DownloadTask, UploadTask
+from module.download_history import DownloadHistory
 from module.stdio import ProgressBar, Base64Image, MetaData
 from module.uploader import TelegramUploader
 from module.util import (
@@ -114,6 +116,8 @@ class TelegramRestrictedMediaDownloader(Bot):
         self.uploader: Union[TelegramUploader, None] = None
         self.cd: Union[CallbackData, None] = None
         self.my_id: int = 0
+        self.download_history: DownloadHistory = DownloadHistory(self.app.work_directory)
+        self.handled_download_media_groups: Dict[Union[str, int], Set[str]] = {}
 
     def env_save_directory(
             self,
@@ -127,6 +131,15 @@ class TelegramRestrictedMediaDownloader(Bot):
                         placeholder,
                         str(getattr(getattr(message, 'chat'), 'id', 'UNKNOWN_CHAT_ID'))
                     )
+                if placeholder == SaveDirectoryPrefix.CHAT_USERNAME:
+                    chat = getattr(message, 'chat', None)
+                    chat_username = getattr(chat, 'username', None)
+                    if not chat_username:
+                        chat_username = str(getattr(chat, 'id', 'UNKNOWN_CHAT_ID'))
+                    save_directory = save_directory.replace(
+                        placeholder,
+                        chat_username
+                    )
                 if placeholder == SaveDirectoryPrefix.MIME_TYPE:
                     for dtype in DownloadType():
                         if getattr(message, dtype, None):
@@ -135,6 +148,80 @@ class TelegramRestrictedMediaDownloader(Bot):
                                 dtype
                             )
         return save_directory
+
+    @staticmethod
+    def build_download_history_key(
+            message: pyrogram.types.Message,
+            download_type: str
+    ) -> str:
+        chat_id = getattr(getattr(message, 'chat', None), 'id', 'UNKNOWN_CHAT_ID')
+        message_id = getattr(message, 'id', 'UNKNOWN_MESSAGE_ID')
+        return f'chat:{chat_id}|message:{message_id}|type:{download_type}'
+
+    @staticmethod
+    def build_media_group_key(
+            message: pyrogram.types.Message
+    ) -> Union[str, None]:
+        media_group_id = getattr(message, 'media_group_id', None)
+        chat_id = getattr(getattr(message, 'chat', None), 'id', None)
+        if media_group_id is None or chat_id is None:
+            return None
+        return f'chat:{chat_id}|media_group:{media_group_id}'
+
+    @staticmethod
+    def build_final_file_path(temp_file_path: str, save_directory: str) -> str:
+        file_name = split_path(temp_file_path).get('file_name')
+        return os.path.join(save_directory, file_name[:-5] if file_name.endswith('.temp') else file_name)
+
+    def should_skip_download_media_group(self, message: pyrogram.types.Message) -> bool:
+        group_key = self.build_media_group_key(message)
+        if not group_key:
+            return False
+        if self.download_history.is_media_group_completed(group_key):
+            return True
+        chat_id = getattr(getattr(message, 'chat', None), 'id', None)
+        if chat_id is None:
+            return False
+        if chat_id not in self.handled_download_media_groups:
+            self.handled_download_media_groups[chat_id] = set()
+        group_id = str(getattr(message, 'media_group_id'))
+        if group_id in self.handled_download_media_groups[chat_id]:
+            return True
+        self.handled_download_media_groups[chat_id].add(group_id)
+        return False
+
+    def mark_download_history(
+            self,
+            message: pyrogram.types.Message,
+            download_type: str,
+            link: Union[str, int],
+            file_path: str
+    ):
+        if not os.path.isfile(file_path):
+            return None
+        self.download_history.safe_mark_completed_download(
+            history_key=self.build_download_history_key(message, download_type),
+            chat_id=getattr(getattr(message, 'chat', None), 'id', None),
+            message_id=getattr(message, 'id', None),
+            media_group_id=getattr(message, 'media_group_id', None),
+            download_type=download_type,
+            link=link,
+            file_path=file_path,
+            file_sha256=None
+        )
+
+    def on_download_link_complete(self, link: Union[str, int]):
+        group_key = DownloadTask.get(link=link, key='history_group_key')
+        group_meta = DownloadTask.get(link=link, key='history_group_meta')
+        if not group_key or not isinstance(group_meta, dict):
+            return None
+        self.download_history.safe_mark_media_group_completed(
+            group_key=group_key,
+            chat_id=group_meta.get('chat_id'),
+            media_group_id=group_meta.get('media_group_id'),
+            member_num=group_meta.get('member_num'),
+            link=link
+        )
 
     async def get_download_link_from_bot(
             self,
@@ -1382,7 +1469,12 @@ class TelegramRestrictedMediaDownloader(Bot):
             message: pyrogram.types.Message
     ):
         try:
-            await self.create_download_task(message_ids=message.link, single_link=True)
+            if getattr(message, 'media_group_id', None):
+                if self.should_skip_download_media_group(message):
+                    return None
+                await self.create_download_task(message_ids=message.link, single_link=False)
+            else:
+                await self.create_download_task(message_ids=message.link, single_link=True)
         except Exception as e:
             log.exception(f'监听下载出现错误,{_t(KeyWord.REASON)}:"{e}"')
 
@@ -1651,8 +1743,29 @@ class TelegramRestrictedMediaDownloader(Bot):
                     self.get_media_meta(
                         message=message,
                         dtype=valid_dtype).values()
+                history_key = self.build_download_history_key(message, valid_dtype)
+                completed_record = self.download_history.get_valid_completed_download(
+                    history_key=history_key,
+                    file_size=sever_file_size
+                )
                 retry['id'] = file_id
-                if is_file_duplicate(
+                if completed_record:
+                    self.download_complete_callback(
+                        sever_file_size=sever_file_size,
+                        temp_file_path=temp_file_path,
+                        link=link,
+                        message=message,
+                        file_name=file_name,
+                        retry_count=retry_count,
+                        file_id=file_id,
+                        format_file_size=format_file_size,
+                        task_id=None,
+                        with_upload=with_upload,
+                        diy_download_type=diy_download_type,
+                        download_type=valid_dtype,
+                        _future=completed_record.get('file_path')
+                    )
+                elif is_file_duplicate(
                         save_directory=save_directory,
                         sever_file_size=sever_file_size
                 ):  # 检测是否存在。
@@ -1668,6 +1781,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                         task_id=None,
                         with_upload=with_upload,
                         diy_download_type=diy_download_type,
+                        download_type=valid_dtype,
                         _future=save_directory
                     )
                 else:
@@ -1714,7 +1828,8 @@ class TelegramRestrictedMediaDownloader(Bot):
                             format_file_size,
                             task_id,
                             with_upload,
-                            diy_download_type
+                            diy_download_type,
+                            valid_dtype
                         )
                     )
             else:
@@ -1799,6 +1914,7 @@ class TelegramRestrictedMediaDownloader(Bot):
             task_id,
             with_upload,
             diy_download_type,
+            download_type,
             _future
     ):
         if task_id is None:
@@ -1815,6 +1931,16 @@ class TelegramRestrictedMediaDownloader(Bot):
                     f'{_t(KeyWord.STATUS)}:{_t(DownloadStatus.SKIP)}。', style='#e6db74'
                 )
                 DownloadTask.COMPLETE_LINK.add(link)
+                final_file_path = _future if isinstance(_future, str) and os.path.isfile(_future) else self.build_final_file_path(
+                    temp_file_path=temp_file_path,
+                    save_directory=self.env_save_directory(message)
+                )
+                self.mark_download_history(
+                    message=message,
+                    download_type=download_type,
+                    link=link,
+                    file_path=final_file_path
+                )
                 if self.uploader:
                     if with_upload and isinstance(with_upload, dict):
                         try:
@@ -1837,6 +1963,15 @@ class TelegramRestrictedMediaDownloader(Bot):
                     save_directory=self.env_save_directory(message),
                     with_move=True
             ):
+                self.mark_download_history(
+                    message=message,
+                    download_type=download_type,
+                    link=link,
+                    file_path=self.build_final_file_path(
+                        temp_file_path=temp_file_path,
+                        save_directory=self.env_save_directory(message)
+                    )
+                )
                 MetaData.print_current_task_num(
                     prompt=_t(KeyWord.CURRENT_DOWNLOAD_TASK),
                     num=self.app.current_task_num
@@ -1966,9 +2101,17 @@ class TelegramRestrictedMediaDownloader(Bot):
                 return None
             message_count: int = len(messages_to_download)
             # 第二阶段：对匹配的消息进行处理，获取评论区。
+            assigned_media_groups: set = set()
             for message in messages_to_download:
-                message_link = message.link if message.link else message
-                links.append(message_link)
+                media_group_key = self.build_media_group_key(message)
+                if not media_group_key or media_group_key not in assigned_media_groups:
+                    message_link = message.link if message.link else message
+                    links.append({
+                        'target': message_link,
+                        'single_link': False if media_group_key else True
+                    })
+                    if media_group_key:
+                        assigned_media_groups.add(media_group_key)
                 if not include_comment:
                     continue
                 # 检查并获取评论区。
@@ -1980,8 +2123,16 @@ class TelegramRestrictedMediaDownloader(Bot):
                         # 根据用户设置的download_type过滤评论中的媒体，但不过滤具体时间。
                         if not _filter.dtype(comment, download_type):
                             continue
+                        comment_media_group_key = self.build_media_group_key(comment)
+                        if comment_media_group_key and comment_media_group_key in assigned_media_groups:
+                            continue
                         comment_link = comment.link if comment.link else comment
-                        links.append(comment_link)
+                        links.append({
+                            'target': comment_link,
+                            'single_link': False if comment_media_group_key else True
+                        })
+                        if comment_media_group_key:
+                            assigned_media_groups.add(comment_media_group_key)
                         try:
                             await callback_query.message.edit_text(
                                 text=f'{callback_query_text}\n'
@@ -2021,8 +2172,8 @@ class TelegramRestrictedMediaDownloader(Bot):
                 except MessageNotModified:
                     pass
                 await self.create_download_task(
-                    message_ids=link,
-                    single_link=True,
+                    message_ids=link.get('target'),
+                    single_link=link.get('single_link', True),
                     diy_download_type=diy_download_type
                 )
                 assigned_count += 1
@@ -2080,6 +2231,15 @@ class TelegramRestrictedMediaDownloader(Bot):
             link_type, chat_id, message, member_num = meta.values()
             DownloadTask.set(link, 'link_type', link_type)
             DownloadTask.set(link, 'member_num', member_num)
+            if isinstance(message, list) and message:
+                group_key = self.build_media_group_key(message[0])
+                if group_key:
+                    DownloadTask.set(link, 'history_group_key', group_key)
+                    DownloadTask.set(link, 'history_group_meta', {
+                        'chat_id': getattr(getattr(message[0], 'chat', None), 'id', None),
+                        'media_group_id': getattr(message[0], 'media_group_id', None),
+                        'member_num': member_num
+                    })
             await self.__add_task(chat_id, link_type, link, message, retry, with_upload, diy_download_type)
             return {
                 'chat_id': chat_id,
@@ -2087,6 +2247,18 @@ class TelegramRestrictedMediaDownloader(Bot):
                 'link_type': link_type,
                 'status': DownloadStatus.DOWNLOADING,
                 'e_code': None
+            }
+        except sqlite3.Error as e:
+            log.error(f'读取下载历史失败,{_t(KeyWord.REASON)}:"{e}"')
+            return {
+                'chat_id': None,
+                'member_num': 0,
+                'link_type': None,
+                'status': DownloadStatus.FAILURE,
+                'e_code': {
+                    'all_member': str(e),
+                    'error_msg': '下载历史数据库不可用'
+                }
             }
         except UnicodeEncodeError as e:
             return {

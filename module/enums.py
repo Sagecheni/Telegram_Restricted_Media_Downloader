@@ -75,6 +75,7 @@ class CalenderKeyboard:
 
 class SaveDirectoryPrefix:
     CHAT_ID: str = '%CHAT_ID%'
+    CHAT_USERNAME: str = '%CHAT_USERNAME%'
     MIME_TYPE: str = '%MIME_TYPE%'
 
     def __iter__(self):

@@ -2,31 +2,34 @@
 # 已完成配置后使用 docker compose up -d
 services:
   trmd:
-    image: gentlesprite/telegram_restricted_media_downloader:latest
+    build:
+      context: .
+      args:
+        APT_MIRROR: mirrors.tuna.tsinghua.edu.cn
+        PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+        PIP_TRUSTED_HOST: pypi.tuna.tsinghua.edu.cn
+    image: trmd:local
     container_name: trmd
     restart: unless-stopped
     stdin_open: true # 保持 stdin 开放，支持交互。
     tty: true # 分配伪终端，支持交互式输入。
     volumes:
       # 配置目录（容器内:/app/TRMD, 由 XDG_CONFIG_HOME=/app 和软件名 TRMD 组成）。
-      - /mnt/cache/trmd/config:/app/TRMD
+      - /mnt/cache/appdata/trmd/config:/app/TRMD
       # Telegram 登录会话文件。
-      - /mnt/cache/trmd/sessions:/app/sessions
+      - /mnt/cache/appdata/trmd/sessions:/app/sessions
       # 下载目录（当前使用外部 NAS 共享目录）。
       - /mnt/user/Sage-NAS/Downloads/Telegram:/app/downloads
       # 临时缓存目录。
-      - /mnt/cache/trmd/temp:/app/temp
+      - /mnt/cache/appdata/trmd/temp:/app/temp
       # 如需挂载链接文件，取消下面注释。
-      # - /mnt/cache/trmd/links.txt:/app/links.txt
+      # - /mnt/cache/appdata/trmd/links.txt:/app/links.txt
     ports:
       - "2921:2921"
     environment:
       - TZ=Asia/Shanghai
     command: >-
-      python main.py
-      --config /app/TRMD/config.yaml
-      --web 2921
-      --mode SESSION
+      python main.py --config /app/TRMD/config.yaml --web 2921 --mode SESSION
     # 如需网络代理，取消下面注释并配置。
     # network_mode: "bridge"
     # extra_hosts:

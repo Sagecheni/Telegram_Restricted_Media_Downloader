@@ -223,6 +223,67 @@ class TelegramRestrictedMediaDownloader(Bot):
             link=link
         )
 
+    def sync_persisted_listeners(self):
+        listen_config: dict = self.gc.config.get('listen', self.gc.default_listen_nesting.copy())
+        listen_config['download'] = sorted(self.listen_download_chat.keys())
+        listen_config['forward'] = sorted(self.listen_forward_chat.keys())
+        self.gc.config['listen'] = listen_config
+        self.gc.save_config(self.gc.config)
+
+    async def register_listen_chat(
+            self,
+            link: str,
+            listen_chat: dict,
+            callback: Callable
+    ) -> bool:
+        if link in listen_chat:
+            return False
+        try:
+            chat = await self.user.get_chat(link)
+            if chat.is_forum:
+                raise PeerIdInvalid
+            handler = MessageHandler(callback, filters=pyrogram.filters.chat(chat.id))
+            listen_chat[link] = handler
+            self.user.add_handler(handler)
+            return True
+        except PeerIdInvalid:
+            try:
+                link_meta: list = link.split()
+                if not link_meta:
+                    return False
+                source_link = link_meta[0]
+                meta: dict = await parse_link(client=self.app.client, link=source_link)
+                topic_id = meta.get('topic_id')
+                chat_id = meta.get('chat_id')
+                filters = pyrogram.filters.chat(chat_id) & pyrogram.filters.topic(topic_id) if topic_id else pyrogram.filters.chat(chat_id)
+                handler = MessageHandler(callback, filters=filters)
+                listen_chat[link] = handler
+                self.user.add_handler(handler)
+                return True
+            except Exception as e:
+                log.error(f'恢复或添加监听"{link}"失败,{_t(KeyWord.REASON)}:"{e}"')
+                return False
+        except Exception as e:
+            log.error(f'恢复或添加监听"{link}"失败,{_t(KeyWord.REASON)}:"{e}"')
+            return False
+
+    async def restore_persisted_listeners(self):
+        listen_config: dict = self.gc.config.get('listen', self.gc.default_listen_nesting.copy())
+        download_links: list = listen_config.get('download', []) or []
+        forward_links: list = listen_config.get('forward', []) or []
+        restored_download = 0
+        restored_forward = 0
+        for link in download_links:
+            if await self.register_listen_chat(link, self.listen_download_chat, self.listen_download):
+                restored_download += 1
+        for link in forward_links:
+            if await self.register_listen_chat(link, self.listen_forward_chat, self.listen_forward):
+                restored_forward += 1
+        if restored_download or restored_forward:
+            p = f'已恢复监听下载:{restored_download}项,监听转发:{restored_forward}项。'
+            console.log(p, style='#FF4689')
+            log.info(f'{p} download:{download_links}, forward:{forward_links}')
+
     async def get_download_link_from_bot(
             self,
             client: pyrogram.Client,
@@ -682,6 +743,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                     KeyboardButton.single_button(text=BotButton.ALREADY_REMOVE, callback_data=BotCallbackText.NULL)
                 )
                 p = f'已删除监听下载,频道链接:"{link}"。'
+                self.sync_persisted_listeners()
                 console.log(p, style='#FF4689')
                 log.info(f'{p}当前的监听下载信息:{self.listen_download_chat}')
                 return None
@@ -701,6 +763,7 @@ class TelegramRestrictedMediaDownloader(Bot):
             await callback_query.message.edit_reply_markup(
                 KeyboardButton.single_button(text=BotButton.ALREADY_REMOVE, callback_data=BotCallbackText.NULL)
             )
+            self.sync_persisted_listeners()
             console.log(p, style='#FF4689')
             log.info(f'{p}当前的监听转发信息:{self.listen_forward_chat}')
         elif callback_data in (
@@ -1359,59 +1422,18 @@ class TelegramRestrictedMediaDownloader(Bot):
             return None
 
         async def add_listen_chat(_link: str, _listen_chat: dict, _callback: Callable) -> bool:
-            if _link not in _listen_chat:
-                try:
-                    chat = await self.user.get_chat(_link)
-                    if chat.is_forum:
-                        raise PeerIdInvalid
-                    handler = MessageHandler(_callback, filters=pyrogram.filters.chat(chat.id))
-                    _listen_chat[_link] = handler
-                    self.user.add_handler(handler)
-                    return True
-                except PeerIdInvalid:
-                    try:
-                        link_meta: list = _link.split()
-                        link_length: int = len(link_meta)
-                        if link_length >= 1:  # v1.6.7 修复内部函数add_listen_chat中,抛出PeerIdInvalid后,在获取链接时抛出ValueError错误。
-                            l_link = link_meta[0]
-                        else:
-                            return False
-                        m: dict = await parse_link(client=self.app.client, link=l_link)
-                        topic_id = m.get('topic_id')
-                        chat_id = m.get('chat_id')
-                        if topic_id:
-                            filters = pyrogram.filters.chat(
-                                chat_id) & pyrogram.filters.topic(topic_id)
-                        else:
-                            filters = pyrogram.filters.chat(chat_id)
-                        handler = MessageHandler(
-                            _callback,
-                            filters=filters
-                        )
-                        _listen_chat[_link] = handler
-                        self.user.add_handler(handler)
-                        return True
-                    except ValueError as e:
-                        await client.send_message(
-                            chat_id=message.from_user.id,
-                            reply_parameters=ReplyParameters(message_id=message.id),
-                            link_preview_options=LINK_PREVIEW_OPTIONS,
-                            text=f'⚠️⚠️⚠️无法读取⚠️⚠️⚠️\n`{_link}`\n(具体原因请前往终端查看报错信息)'
-                        )
-                        log.error(f'频道"{_link}"解析失败,{_t(KeyWord.REASON)}:"{e}"')
-                        return False
-                except Exception as e:
-                    await client.send_message(
-                        chat_id=message.from_user.id,
-                        reply_parameters=ReplyParameters(message_id=message.id),
-                        link_preview_options=LINK_PREVIEW_OPTIONS,
-                        text=f'⚠️⚠️⚠️无法读取⚠️⚠️⚠️\n`{_link}`\n(具体原因请前往终端查看报错信息)'
-                    )
-                    log.error(f'读取频道"{_link}"时遇到错误,{_t(KeyWord.REASON)}:"{e}"')
-                    return False
-            else:
+            if _link in _listen_chat:
                 await self.cancel_listen(client, message, _link, command)
                 return False
+            result = await self.register_listen_chat(_link, _listen_chat, _callback)
+            if not result:
+                await client.send_message(
+                    chat_id=message.from_user.id,
+                    reply_parameters=ReplyParameters(message_id=message.id),
+                    link_preview_options=LINK_PREVIEW_OPTIONS,
+                    text=f'⚠️⚠️⚠️无法读取⚠️⚠️⚠️\n`{_link}`\n(具体原因请前往终端查看报错信息)'
+                )
+            return result
 
         links: list = meta.get('links')
         command: str = meta.get('command')
@@ -1438,6 +1460,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                         ]])
                     )
                     p = f'已新增监听下载,频道链接:"{link}"。'
+                    self.sync_persisted_listeners()
                     console.log(p, style='#FF4689')
                     log.info(f'{p}当前的监听下载信息:{self.listen_download_chat}')
         elif command == '/listen_forward':
@@ -1460,6 +1483,7 @@ class TelegramRestrictedMediaDownloader(Bot):
                     )
                 )
                 p = f'已新增监听转发,转发规则:"{listen_link} -> {target_link}"。'
+                self.sync_persisted_listeners()
                 console.log(p, style='#FF4689')
                 log.info(f'{p}当前的监听转发信息:{self.listen_forward_chat}')
 
@@ -2439,6 +2463,7 @@ class TelegramRestrictedMediaDownloader(Bot):
             if self.is_bot_running:
                 self.uploader = TelegramUploader(download_object=self)
                 self.cd = CallbackData()
+                await self.restore_persisted_listeners()
                 if self.gc.upload_delete:
                     console.log(
                         f'在使用转发(/forward)、监听转发(/listen_forward)、上传(/upload)、递归上传(/upload_r)时:\n'

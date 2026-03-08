@@ -610,6 +610,11 @@ class GlobalConfig(BaseConfig):
                 'voice': True,
                 'text': True,
                 'animation': True
+            },
+        'listen':
+            {
+                'download': [],
+                'forward': []
             }
     }
 
@@ -617,6 +622,7 @@ class GlobalConfig(BaseConfig):
         super().__init__()
         self.default_upload_nesting = self.TEMPLATE.get('upload')
         self.default_forward_type_nesting = self.TEMPLATE.get('forward_type')
+        self.default_listen_nesting = self.TEMPLATE.get('listen')
         self.load_config()
         self.__check_params(self.config.copy())
         self.download_upload: bool = self.get_nesting_config(
@@ -630,6 +636,7 @@ class GlobalConfig(BaseConfig):
             nesting_param='delete'
         )
         self.forward_type: dict = self.config.get('forward_type')
+        self.listen: dict = self.config.get('listen', self.default_listen_nesting.copy())
 
     def get_nesting_config(self, default_nesting, param, nesting_param):
         return self.config.get(param, default_nesting).get(nesting_param)
@@ -647,6 +654,7 @@ class GlobalConfig(BaseConfig):
             nesting_param='delete'
         )
         self.forward_type: dict = self.config.get('forward_type')
+        self.listen: dict = self.config.get('listen', self.default_listen_nesting.copy())
         p = '全局配置文件已重新加载。'
         console.log(p, style='#FF4689')
         log.info(f'{p}{self.config}')
@@ -662,6 +670,7 @@ class GlobalConfig(BaseConfig):
             log_message='"{}"不在全局配置文件中,已添加。'
         )
         self.process_nesting(param_name='export_table', config=config)
+        self.process_nesting(param_name='listen', config=config)
         # 删除父级模板中没有的字段。
         self.remove_extra_keys(
             target=config,
